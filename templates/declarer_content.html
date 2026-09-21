@@ -20,12 +20,11 @@
              inputmode="numeric" placeholder="JJ/MM/AAAA"
              value="{{ form.get('published_on', today) | fr_date }}">
     </div>
-    {{ ui.label_select('content_type', 'Type de contenu', content_types, form,
-                        required=False) }}
+    {{ ui.label_select('content_type', 'Type de contenu', content_types, form) }}
   </div>
 
   {{ ui.proposed_organisation_field(form, organisation_names) }}
-  {{ ui.proposed_people_field(form) }}
+  {{ ui.proposed_people_field(form, person_names) }}
 
   <div class="field">
     <label for="link">Lien vers le contenu <span class="req">*</span></label>

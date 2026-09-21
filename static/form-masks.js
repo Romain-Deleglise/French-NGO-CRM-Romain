@@ -196,6 +196,35 @@
     sync();
   }
 
+  // The twin of the above, for « Préciser »: it appears once « Bénévole » or
+  // « Employé·e » is ticked (data-role-detail-roles, rendered from
+  // ROLE_DETAIL_ROLES). Unlike the portefeuille the boxes live in two blocks —
+  // ONG and entreprise each have their own list — so what decides is whether
+  // any *visible* list has one ticked, not just this one: a hidden block's
+  // boxes are cleared by the type toggle, but only once it has run.
+  function attachRoleDetailToggle(list) {
+    var field = document.getElementById("role-detail-field");
+    if (!field) return;
+    var detailRoles = (list.getAttribute("data-role-detail-roles") || "").split("|");
+    var scope = list.closest("form") || document;
+
+    function sync() {
+      var on = Array.prototype.some.call(
+        scope.querySelectorAll("[data-role-detail-roles]"),
+        function (other) {
+          if (other.closest("[data-role-block][hidden]")) return false;
+          return Array.prototype.some.call(
+            other.querySelectorAll('input[type="checkbox"]:checked'),
+            function (box) { return detailRoles.indexOf(box.value) !== -1; }
+          );
+        }
+      );
+      field.hidden = !on;
+    }
+    list.addEventListener("change", sync);
+    sync();
+  }
+
   // « Format de la rencontre » drives the free-text field under it: présentiel
   // asks where you went and insists on an answer, visio reuses the same field
   // for an optional link. Hidden until a format is picked, so the question is
@@ -248,11 +277,13 @@
       scope.querySelectorAll('input[type="checkbox"]').forEach(function (box) {
         box.checked = false;
       });
-      // Tell the portefeuille toggle its roles are gone: it listens for a
-      // change on its own checklist, and clearing boxes from script fires none.
-      scope.querySelectorAll("[data-portfolio-roles]").forEach(function (list) {
-        list.dispatchEvent(new Event("change", { bubbles: true }));
-      });
+      // Tell the portefeuille and « Préciser » toggles their roles are gone:
+      // each listens for a change on its own checklist, and clearing boxes
+      // from script fires none.
+      scope.querySelectorAll("[data-portfolio-roles], [data-role-detail-roles]")
+        .forEach(function (list) {
+          list.dispatchEvent(new Event("change", { bubbles: true }));
+        });
     }
 
     // One level further in, for a religieux·se only: « Religion » picks which
@@ -284,6 +315,11 @@
         if (!on) clear(block);
         block.hidden = !on;
       });
+      // « Préciser » depends on which block is now visible, so it is re-asked
+      // after the blocks have been shown and hidden, never before.
+      form.querySelectorAll("[data-role-detail-roles]").forEach(function (list) {
+        list.dispatchEvent(new Event("change", { bubbles: true }));
+      });
       // Mandate details belong to an élu·e: circonscription, and the
       // portefeuille field (which its own toggle then shows or hides on the
       // roles actually ticked).
@@ -310,13 +346,22 @@
   var ORG_TYPE_OF_CONTACT = {
     "Journaliste": "M\u00e9dia",
     "Politique": "Groupe politique",
-    "Religieux\u00b7se": "Culte"
+    "Religieux\u00b7se": "Culte",
+    "Membre d'une ONG": "ONG",
+    "Membre d'une entreprise": "Entreprise",
+    "Autre": "Autre"
   };
 
+  // ONG, entreprise and autre belong to no type de contact, so they are offered
+  // on top of whichever one is chosen: a journaliste can sit on an NGO board
+  // and an élu·e can chair an association. app.py keeps the same set on save.
+  var NEUTRAL_ORG_TYPES = ["ONG", "Entreprise", "Autre"];
+
   function syncOrganisations(form, contactType) {
-    var wanted = ORG_TYPE_OF_CONTACT[contactType] || "";
+    var own = ORG_TYPE_OF_CONTACT[contactType] || "";
+    var wanted = own ? [own].concat(NEUTRAL_ORG_TYPES) : [];
     form.querySelectorAll("[data-org-checklist] [data-org-type]").forEach(function (row) {
-      var on = row.getAttribute("data-org-type") === wanted;
+      var on = wanted.indexOf(row.getAttribute("data-org-type")) !== -1;
       if (!on) {
         var box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = false;
@@ -326,14 +371,16 @@
     var picker = form.querySelector("#organisation_picker");
     if (picker) {
       picker.querySelectorAll("option[data-org-type]").forEach(function (opt) {
-        opt.hidden = opt.getAttribute("data-org-type") !== wanted;
+        opt.hidden = wanted.indexOf(opt.getAttribute("data-org-type")) === -1;
       });
       picker.value = "";
     }
     // The hint under the picker says what the field means for this type, and
     // the field itself is pointless before a type is chosen.
     var field = form.querySelector("#organisation-field");
-    if (field) field.hidden = !wanted;
+    if (field) field.hidden = !own;
+    // The three neutral types get no hint of their own: their organisation is
+    // named by the type itself, so there is nothing left to explain.
     var hints = {
       "Journaliste": form.querySelector("[data-org-hint-journaliste]"),
       "Politique": form.querySelector("[data-org-hint-politique]"),
@@ -506,6 +553,77 @@
     sync();
   }
 
+  // A [data-genre-filter] block narrows a list of people to those the chosen
+  // genre concerns. Each entry carries data-genres (its person's genres,
+  // « | »-separated — see person_genres in app.py). A box already ticked stays
+  // visible whatever the genre, so an edit never hides what it is about to
+  // save, and the genre stays a way of finding people rather than a rule about
+  // who may be named.
+  function attachGenreFilter(block) {
+    var genre = document.getElementById(block.getAttribute("data-genre-filter"));
+    if (!genre) return;
+    var entries = block.querySelectorAll("[data-genres]");
+
+    function matches(el) {
+      var want = genre.value;
+      if (!want) return true;
+      var has = el.getAttribute("data-genres");
+      if (!has) return true;
+      return has.split("|").indexOf(want) !== -1;
+    }
+
+    function sync() {
+      entries.forEach(function (el) {
+        var box = el.querySelector('input[type="checkbox"]');
+        el.hidden = !matches(el) && !(box && box.checked);
+      });
+      // The quick-pick dropdown lists the same people: an <option> cannot be
+      // hidden reliably across browsers, so it is disabled instead.
+      block.querySelectorAll("option[data-genres]").forEach(function (opt) {
+        opt.disabled = !matches(opt);
+      });
+    }
+    genre.addEventListener("change", sync);
+    block.addEventListener("change", sync);
+    sync();
+  }
+
+  // The « À contacter » picker lists people grouped by organisation, so someone
+  // in two of them appears twice. The two boxes are the same person: ticking
+  // one ticks the other, and a group's « Tout cocher » flips the whole group
+  // (and flips it back once everything in it is ticked).
+  function attachPeopleForm(form) {
+    function boxes(scope) {
+      return scope.querySelectorAll(
+        'input[type="checkbox"][name="person_ids"]:not([disabled])'
+      );
+    }
+    function mirror(box) {
+      boxes(form).forEach(function (other) {
+        if (other !== box && other.value === box.value) other.checked = box.checked;
+      });
+    }
+
+    form.addEventListener("change", function (e) {
+      if (e.target.name === "person_ids") mirror(e.target);
+    });
+
+    form.querySelectorAll("[data-check-all]").forEach(function (btn) {
+      var group = btn.closest("[data-people-group]");
+      if (!group) return;
+      btn.addEventListener("click", function () {
+        var inGroup = boxes(group);
+        var allOn = Array.prototype.every.call(inGroup, function (b) {
+          return b.checked;
+        });
+        inGroup.forEach(function (b) {
+          b.checked = !allOn;
+          mirror(b);
+        });
+      });
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     document
       .querySelectorAll('input[name="meeting_time"], input[name="alt_times"]')
@@ -527,6 +645,9 @@
     document
       .querySelectorAll("[data-portfolio-roles]")
       .forEach(attachPortfolioToggle);
+    document
+      .querySelectorAll("[data-role-detail-roles]")
+      .forEach(attachRoleDetailToggle);
     // After the portfolio toggle, so the type toggle's initial sync has the
     // last word on whether the portefeuille field is visible at all.
     document
@@ -535,6 +656,12 @@
     document
       .querySelectorAll("[data-org-type-form]")
       .forEach(attachOrgTypeToggle);
+    document
+      .querySelectorAll("[data-genre-filter]")
+      .forEach(attachGenreFilter);
+    document
+      .querySelectorAll("[data-people-form]")
+      .forEach(attachPeopleForm);
     document
       .querySelectorAll("form[data-autosave]")
       .forEach(attachAutosave);

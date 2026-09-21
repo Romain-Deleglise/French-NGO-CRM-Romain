@@ -9,9 +9,11 @@
 
 {% include "_moderation_origin.html" %}
 
-{# Like the person form, both type blocks are rendered and one is hidden, so
-   the type can change without a round trip. _save_organisation drops the
-   other type's fields rather than trusting what was posted. #}
+{# Like the person form, every type block is rendered and one is shown, so the
+   type can change without a round trip. _save_organisation drops the other
+   types' fields rather than trusting what was posted. ONG, entreprise and
+   autre have no block at all: position sur PauseIA, lien et notes are their
+   whole fiche. #}
 <form class="card form" method="post" action="{{ action_url }}" data-org-type-form>
 
   {{ ui.no_moderators_notice(moderators) }}
@@ -27,7 +29,7 @@
       <label for="org_type">Type d'organisation <span class="req">*</span></label>
       <select id="org_type" name="org_type" required data-org-type>
         <option value="" disabled {% if not form.get('org_type') %}selected{% endif %}>
-          Média ou groupe politique ?
+          Média, groupe politique, culte, ONG… ?
         </option>
         {% for t in org_types %}
           <option value="{{ t }}"

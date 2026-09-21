@@ -599,6 +599,11 @@ a.cal-ev:hover {
 .todo-head { margin-top: 1.6rem; padding-left: .6rem; border-left: 4px solid; }
 .todo-head-meeting { border-color: var(--brand); }
 .todo-head-relance { border-color: var(--relance); }
+/* « À contacter » is about writing to someone, so it borrows the courriel
+   yellow the rest of the app already uses for mail. */
+.todo-head-contact { border-color: var(--courriel); }
+/* The « + Ajouter des personnes » button sits on the heading line. */
+.btn-inline { margin-left: .6rem; vertical-align: middle; font-size: .85rem; }
 
 .todo-list { list-style: none; margin: .6rem 0 0; padding: 0; }
 .todo-item {
@@ -615,6 +620,7 @@ a.cal-ev:hover {
 .todo-meeting { border-left-color: var(--brand); }
 .todo-relance { border-left-color: var(--relance); }
 .todo-relance .todo-title { color: var(--relance-ink); }
+.todo-contact { border-left-color: var(--courriel); }
 
 .todo-body { flex: 1; min-width: 0; }
 .todo-title { font-weight: 600; text-decoration: none; }
@@ -837,6 +843,11 @@ a.cal-ev:hover {
 .tag-culte, .tag-religieux   { background: var(--culte); color: var(--culte-ink);
                                border-width: 1px; border-style: solid;
                                border-color: var(--culte-line); }
+/* ONG, entreprise, autre: the organisations that belong to no type de contact.
+   One neutral colour for the three, so they read as a family of their own
+   rather than as a faded version of a média or a groupe. */
+.tag-neutre { background: var(--bg); color: var(--muted);
+              border-width: 1px; border-style: solid; border-color: var(--line); }
 a.tag:hover { text-decoration: none; filter: brightness(.96); }
 
 /* ---------- Filter chips (type de contact, type d'organisation) ---------- */

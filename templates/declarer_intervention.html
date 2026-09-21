@@ -20,11 +20,11 @@
              value="{{ form.get('intervention_date', today) | fr_date }}">
     </div>
     {{ ui.label_select('intervention_type', "Type d'intervention",
-                        intervention_types, form, required=False) }}
+                        intervention_types, form) }}
   </div>
 
   {{ ui.proposed_organisation_field(form, organisation_names) }}
-  {{ ui.proposed_people_field(form) }}
+  {{ ui.proposed_people_field(form, person_names) }}
 
   <div class="field">
     <label for="link">Lien vers l'intervention <span class="req">*</span></label>

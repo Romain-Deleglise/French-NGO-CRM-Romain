@@ -19,13 +19,17 @@
 {% if url | safe_link %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">{{ url | truncate(60, True, '…') }}</a>{% else %}{{ url or '—' }}{% endif %}
 {% endmacro %}
 
-{# What an organisation is, in one tag: « Média », « Groupe politique » or
-   « Culte ». A lookup rather than a ternary, so a fourth org_type gets its own
-   colour instead of quietly borrowing another one's. #}
+{# What an organisation is, in one tag. A lookup rather than a ternary, so a
+   new org_type gets its own colour instead of quietly borrowing another one's.
+   The three types that belong to no type de contact share one neutral colour,
+   because that is exactly what they have in common. #}
 {% set ORG_TAG_CLASS = {
      'Média': 'tag-media',
      'Groupe politique': 'tag-groupe',
      'Culte': 'tag-culte',
+     'ONG': 'tag-neutre',
+     'Entreprise': 'tag-neutre',
+     'Autre': 'tag-neutre',
    } %}
 {% macro org_tag(org_type) %}
 <span class="tag {{ ORG_TAG_CLASS.get(org_type, 'tag-inactive') }}">{{ org_type }}</span>
@@ -37,6 +41,9 @@
      'Journaliste': 'tag-journaliste',
      'Politique': 'tag-politique',
      'Religieux·se': 'tag-religieux',
+     "Membre d'une ONG": 'tag-neutre',
+     "Membre d'une entreprise": 'tag-neutre',
+     'Autre': 'tag-neutre',
    } %}
 {% macro contact_tag(contact_type) %}
 <span class="tag {{ CONTACT_TAG_CLASS.get(contact_type, 'tag-inactive') }}">{{ contact_type }}</span>
@@ -92,9 +99,18 @@
         (un·e évêque est souvent aussi théologien·ne).</p>
       {% endif %}
 
+    {% elif not roles_by_contact_type[type] %}
+      {# « Autre » is the type for someone none of the others fits, so there is
+         no list of functions to offer. Say so rather than showing an empty
+         box, and point at the field that does take an answer. #}
+      <label>Fonction</label>
+      <p class="hint">Aucune fonction prédéfinie pour ce type de contact :
+        décrivez-la dans les notes, plus bas.</p>
+
     {% else %}
       <label>Fonction <span class="muted">(facultatif — plusieurs choix possibles)</span></label>
-      <div class="checklist" data-portfolio-roles="{{ portfolio_roles|join('|') }}">
+      <div class="checklist" data-portfolio-roles="{{ portfolio_roles|join('|') }}"
+           data-role-detail-roles="{{ role_detail_roles|join('|') }}">
         {% for r in roles_by_contact_type[type] %}
           <label class="check">
             <input type="checkbox" name="role" value="{{ r }}"
@@ -108,15 +124,33 @@
         {% if type == 'Politique' %}
           Une même personne peut cumuler plusieurs fonctions
           (un·e ministre est souvent aussi député·e).
-        {% else %}
+        {% elif type == 'Journaliste' %}
           Une même personne peut cumuler plusieurs fonctions
           (un·e éditorialiste est souvent aussi chroniqueur·euse).
+        {% else %}
+          Une même personne peut cumuler plusieurs fonctions
+          (un·e chercheur·euse est souvent aussi cadre).
         {% endif %}
       </p>
       {% endif %}
     {% endif %}
   </div>
   {% endfor %}
+{% endmacro %}
+
+{# « Préciser »: the free text behind « Bénévole » or « Employé·e ». Hidden
+   until one of them is ticked (static/form-masks.js), and dropped again by
+   _save_person if none was submitted — so the comfort and the rule agree. #}
+{% macro role_detail_field(form, chosen) %}
+<div class="field" id="role-detail-field"
+     {% if not chosen|select('in', role_detail_roles)|list %}hidden{% endif %}>
+  <label for="role_detail">Préciser <span class="muted">(facultatif)</span></label>
+  <input type="text" id="role_detail" name="role_detail"
+         value="{{ form.get('role_detail', '') }}"
+         placeholder="ex. bénévole sur la campagne courriers, employé·e au service juridique">
+  <p class="hint">Ce que la personne fait exactement : « Bénévole » et
+    « Employé·e » disent ce qu'elle est, rarement ce qu'elle y fait.</p>
+</div>
 {% endmacro %}
 
 {# « Territoire assigné »: the diocèse, paroisse or circonscription rabbinique
@@ -131,22 +165,27 @@
 </div>
 {% endmacro %}
 
-{# Checkbox list of people, with a dropdown to tick one quickly. #}
-{% macro person_picker(people, selected_ids, label, required=True) %}
-<div class="field">
+{# Checkbox list of people, with a dropdown to tick one quickly.
+
+   `genre_field` names a <select> whose value narrows the list to the people
+   that genre concerns — «°Politique°» leaves the politiques, and so on (see
+   attachGenreFilter in static/form-masks.js). Passing nothing leaves the list
+   unfiltered, which is what every other form does. #}
+{% macro person_picker(people, selected_ids, label, required=True, genre_field=None) %}
+<div class="field" {% if genre_field %}data-genre-filter="{{ genre_field }}"{% endif %}>
   <label>{{ label }} {% if required %}<span class="req">*</span>{% else %}<span class="muted">(facultatif)</span>{% endif %}</label>
   <div class="person-picker">
     <label for="person_picker" class="muted">Cocher une personne depuis la liste</label>
     <select id="person_picker" data-check-group="person_ids">
       <option value="">— Choisir une personne —</option>
       {% for p in people %}
-      <option value="{{ p['id'] }}">{{ p['name'] }}{% if p['organisation_names'] %} — {{ p['organisation_names'] }}{% endif %}</option>
+      <option value="{{ p['id'] }}" data-genres="{{ p['genres'] or '' }}">{{ p['name'] }}{% if p['organisation_names'] %} — {{ p['organisation_names'] }}{% endif %}</option>
       {% endfor %}
     </select>
   </div>
   <div class="checklist">
     {% for p in people %}
-      <label class="check">
+      <label class="check" data-genres="{{ p['genres'] or '' }}">
         <input type="checkbox" name="person_ids" value="{{ p['id'] }}"
                {% if (p['id']|string) in selected_ids %}checked{% endif %}>
         {{ p['name'] }}{% if p['organisation_names'] %} <span class="muted">— {{ p['organisation_names'] }}</span>{% endif %}
@@ -157,6 +196,8 @@
   </div>
   <p class="hint">
     Quelqu'un manque ? <a href="{{ url_for('new_person') }}">Ajouter une personne</a>.
+    {% if genre_field %}Le genre ne fait que restreindre la liste ; les personnes
+    déjà cochées restent visibles.{% endif %}
   </p>
 </div>
 {% endmacro %}
@@ -203,6 +244,10 @@
     Le culte, le diocèse, le consistoire ou la fédération dont cette personne
     relève. Il manque ?
     <a href="{{ url_for('new_organisation', org_type='Culte') }}">Ajouter un culte</a>.
+  </p>
+  <p class="hint">
+    Les ONG et les entreprises sont proposées à tout le monde : elles ne
+    relèvent d'aucun type de contact, et quiconque peut en faire partie.
   </p>
 </div>
 {% endmacro %}
@@ -395,11 +440,27 @@
 </div>
 {% endmacro %}
 
-{% macro proposed_people_field(form) %}
+{# « Personnes concernées » on the public forms: free text, plus a picker of
+   the people it is safe to list publicly (see _public_person_names). The field
+   stays free text because a declarant may well name somebody who has no fiche
+   yet — the picker only spares them the typing, exactly as
+   proposed_organisation_field does for the organisation. #}
+{% macro proposed_people_field(form, person_names=None) %}
 <div class="field">
   <label for="proposed_people">Personnes concernées <span class="req">*</span></label>
   <textarea id="proposed_people" name="proposed_people" rows="2" required
     placeholder="ex. Jean Dupont, Marie Martin…">{{ form.get('proposed_people', '') }}</textarea>
+  {% if person_names %}
+  <div class="depute-picker">
+    <label for="person_picker">Ajouter une personne depuis la liste</label>
+    <select id="person_picker" data-target="proposed_people">
+      <option value="">— Choisir une personne —</option>
+      {% for p in person_names %}
+      <option value="{{ p['name'] }}">{{ p['name'] }}{% if p['role'] %} — {{ p['role'] }}{% endif %}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
   <p class="hint">Indiquez les noms, séparés par des virgules ; un membre de l'équipe
     fera le lien avec les fiches. Si une personne n'a pas encore de fiche, vous
     pouvez <a href="{{ url_for('declarer_person') }}">la proposer d'abord</a>.</p>

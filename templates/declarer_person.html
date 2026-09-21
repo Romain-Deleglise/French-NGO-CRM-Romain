@@ -25,7 +25,7 @@
       <label for="contact_type">Type de contact <span class="muted">(facultatif)</span></label>
       <select id="contact_type" name="contact_type" data-contact-type>
         <option value="" {% if not form.get('contact_type') %}selected{% endif %}>
-          Journaliste, politique ou religieux·se ?
+          Journaliste, politique, religieux·se… ?
         </option>
         {% for t in contact_types %}
           <option value="{{ t }}"
@@ -54,6 +54,8 @@
      « Cardinal » for an imam, which is what the religion select inside the
      religieux·se block is for. #}
   {{ ui.role_checklists(form, chosen) }}
+
+  {{ ui.role_detail_field(form, chosen) }}
 
   <div class="field" id="portefeuille-field"
        {% if not chosen|select('in', portfolio_roles)|list %}hidden{% endif %}>

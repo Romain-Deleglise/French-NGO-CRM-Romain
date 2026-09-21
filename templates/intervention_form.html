@@ -25,7 +25,11 @@
 
   {{ ui.organisation_select(organisations, form.get('organisation_id')) }}
 
-  {{ ui.person_picker(people, selected_ids, "Personnes concernées") }}
+  {{ ui.label_select('genre', "Genre de l'intervention", genres, form,
+                     required=False, placeholder='Tous genres') }}
+
+  {{ ui.person_picker(people, selected_ids, "Personnes concernées",
+                      genre_field='genre') }}
 
   {{ ui.moderator_checklist(moderators, selected_mods, "Qui est intervenu pour PauseIA ?") }}
 

@@ -45,6 +45,39 @@
 <p class="muted">Aucune relance traitée.</p>
 {% endif %}
 
+<h2 class="todo-head todo-head-contact">
+  Personnes contactées <span class="muted">({{ contacted|length }})</span>
+</h2>
+{% if contacted %}
+<ul class="todo-list">
+  {% for c in contacted %}
+  <li class="todo-item todo-contact todo-done">
+    <form method="post"
+          action="{{ url_for('toggle_to_contact_done', person_id=c['id']) }}">
+      <button type="submit" class="todo-check" role="checkbox" aria-checked="true"
+              title="Décocher — remet la personne dans le TODO">☑</button>
+    </form>
+    <div class="todo-body">
+      <a class="todo-title" href="{{ url_for('person_detail', person_id=c['id']) }}">
+        {{ c['name'] }}
+      </a>
+      <p class="todo-sub">{{ c['organisation_names'] or 'Sans organisation' }}</p>
+      <p class="todo-meta">
+        {% if c['done_at'] %}Contactée le {{ c['done_at'] | fr_date }}{% else %}Contactée{% endif %}
+        {% if c['added_by_name'] %}· ajoutée par {{ c['added_by_name'] }}{% endif %}
+      </p>
+    </div>
+    <form method="post" action="{{ url_for('remove_to_contact', person_id=c['id']) }}"
+          onsubmit="return confirm('Retirer cette personne de la liste « À contacter » ? Sa fiche n\'est pas touchée.');">
+      <button class="btn btn-ghost" type="submit">Retirer</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">Personne cochée.</p>
+{% endif %}
+
 <h2 class="todo-head todo-head-meeting">
   Rencontres faites <span class="muted">({{ meetings_done|length }})</span>
 </h2>

@@ -81,6 +81,12 @@
         — suite {% if r['kind'] == 'meeting' %}à la rencontre{% else %}au courriel{% endif %}
         du {{ r['on_date'] | fr_date }}
       </p>
+      {# Whoever wrote to them last picks the relance back up; « quiconque »
+         when nobody here has ever written to them. #}
+      <p class="todo-sub">
+        À envoyer par :
+        <strong>{{ r['relance_by'] | replace(',', ', ') if r['relance_by'] else 'quiconque' }}</strong>
+      </p>
       <p class="todo-meta">
         {% for addr in (r['person_emails'] or '').split(', ') if addr %}
           <a href="mailto:{{ addr }}">{{ addr }}</a>{% if not loop.last %} · {% endif %}
@@ -94,6 +100,50 @@
 </ul>
 {% else %}
 <p class="muted">Aucune relance en attente.</p>
+{% endif %}
+
+{# ---------------- À contacter ---------------- #}
+<h2 class="todo-head todo-head-contact">
+  À contacter <span class="muted">({{ to_contact|length }})</span>
+  <a class="btn btn-primary btn-inline" href="{{ url_for('to_contact_picker') }}">
+    + Ajouter des personnes</a>
+</h2>
+<p class="hint">Les personnes à qui écrire. Cocher une personne la retire d'ici et
+  la place dans <a href="{{ url_for('fait') }}">Fait</a>, où vous pouvez la
+  décocher pour la faire revenir ou la retirer de la liste.</p>
+{% if to_contact %}
+<ul class="todo-list">
+  {% for c in to_contact %}
+  <li class="todo-item todo-contact">
+    <form method="post"
+          action="{{ url_for('toggle_to_contact_done', person_id=c['id']) }}">
+      <button type="submit" class="todo-check" role="checkbox" aria-checked="false"
+              title="Marquer comme contactée — la personne passe dans Fait">☐</button>
+    </form>
+    <div class="todo-body">
+      <a class="todo-title" href="{{ url_for('person_detail', person_id=c['id']) }}">
+        {{ c['name'] }}
+      </a>
+      <p class="todo-sub">
+        {{ c['organisation_names'] or 'Sans organisation' }}
+        {% if c['role'] %}<span class="muted">· {{ c['role'] }}</span>{% endif %}
+      </p>
+      <p class="todo-meta">
+        {% if c['email'] %}
+          <a href="mailto:{{ c['email'] }}">{{ c['email'] }}</a> ·
+        {% else %}
+          <span class="warn">Aucune adresse enregistrée</span> ·
+        {% endif %}
+        {{ c['pauseia_mails'] }} courriel{{ '' if c['pauseia_mails'] == 1 else 's' }}
+        déjà envoyé{{ '' if c['pauseia_mails'] == 1 else 's' }} par PauseIA
+        {% if c['added_by_name'] %}· ajoutée par {{ c['added_by_name'] }}{% endif %}
+      </p>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">Personne à contacter pour le moment.</p>
 {% endif %}
 
 {# ---------------- Rencontres à venir : inscriptions ---------------- #}

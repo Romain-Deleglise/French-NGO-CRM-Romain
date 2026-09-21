@@ -30,16 +30,13 @@
       <label for="contact_type">Type de contact <span class="req">*</span></label>
       <select id="contact_type" name="contact_type" required data-contact-type>
         <option value="" disabled {% if not form.get('contact_type') %}selected{% endif %}>
-          Journaliste, politique ou religieux·se ?
+          Journaliste, politique, religieux·se… ?
         </option>
         {% for t in contact_types %}
           <option value="{{ t }}"
             {% if form.get('contact_type') == t %}selected{% endif %}>{{ t }}</option>
         {% endfor %}
       </select>
-      <p class="hint">Ce choix détermine les fonctions proposées et le type
-        d'organisation à laquelle cette personne est rattachée. Pour un·e
-        religieux·se, la religion choisie les affine encore.</p>
     </div>
 
     <div class="field">
@@ -61,6 +58,8 @@
      another culte, so changing someone's type does not leave a stale
      fonction. #}
   {{ ui.role_checklists(form, chosen, hints=True) }}
+
+  {{ ui.role_detail_field(form, chosen) }}
 
   {{ ui.organisation_checklist(organisations, selected_orgs) }}
 
@@ -87,10 +86,9 @@
       <p class="readonly-value">
         {% if form.get('follow_up_date') %}{{ form.get('follow_up_date') | fr_date }}{% else %}—{% endif %}
       </p>
-      <p class="hint">Ce champ ne se saisit pas ici : il reprend la relance de
-        l'échange le plus récent de la personne — la rencontre ou le courriel le
-        plus proche d'aujourd'hui. Pour la changer, modifiez la relance de cet
-        échange.</p>
+      <p class="hint">La relance ne se saisit pas ici. Elle est égale à la
+        date de relance renseignée dans la Rencontre ou le Courriel dont la date
+        est la plus proche de la date d'aujourd'hui.</p>
     </div>
   </div>
 

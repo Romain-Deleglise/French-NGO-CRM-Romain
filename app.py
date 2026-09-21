@@ -10,14 +10,22 @@ optional attached document. Persons link many-to-many to both meetings and
 mails: a meeting/mail involves one or more persons, and a person may appear in
 zero or more meetings and mails.
 
+Two lists sit on /todo beside the rencontres: the relances that have come due,
+each naming the utilisateurice who wrote to that person last (« quiconque »
+when nobody has), and « À contacter », a hand-built list of people to write to,
+ticked off the same way. An intervention and a contenu each carry an optional
+« Genre » (see GENRES), which narrows the people their form offers.
+
 Run with:  uv run flask --app app run --debug
 """
 
 import calendar as pycalendar
 import os
 import random
+import re
 import sqlite3
 import time
+import unicodedata
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -123,19 +131,93 @@ POLITICAL_GROUPS = {
 # they can belong to (ORG_TYPE_BY_CONTACT_TYPE), and which extra mandate fields
 # are shown. Adding a fourth type means one entry here plus its role list and
 # its organisation type — that is exactly how « Religieux·se » was added.
-CONTACT_TYPES = ["Journaliste", "Politique", "Religieux·se"]
+CONTACT_TYPES = [
+    "Journaliste",
+    "Politique",
+    "Religieux·se",
+    "Membre d'une ONG",
+    "Membre d'une entreprise",
+    "Autre",
+]
 
 # Organisations come in the same flavours, one per contact type: a journalist
 # works for a média, a politician sits in a groupe politique, a religious figure
 # belongs to a culte (a church, a diocèse, a consistoire, a mosque…).
-ORG_TYPES = ["Média", "Groupe politique", "Culte"]
+ORG_TYPES = ["Média", "Groupe politique", "Culte", "ONG", "Entreprise", "Autre"]
 
 ORG_TYPE_BY_CONTACT_TYPE = {
     "Journaliste": "Média",
     "Politique": "Groupe politique",
     "Religieux·se": "Culte",
+    "Membre d'une ONG": "ONG",
+    "Membre d'une entreprise": "Entreprise",
+    "Autre": "Autre",
 }
 CONTACT_TYPE_BY_ORG_TYPE = {v: k for k, v in ORG_TYPE_BY_CONTACT_TYPE.items()}
+
+# ONG, Entreprise and Autre are the organisation types that belong to no type
+# de contact. Anybody can be part of one — a journaliste sits on an NGO board,
+# an élu·e chairs an association — so they are offered to every type de contact
+# on top of that type's own organisation, and CONTACT_TYPE_BY_ORG_TYPE knows
+# nothing about them: which is exactly what stops _link_persons_to_organisation
+# from concluding that someone quoted by an ONG works for it.
+#
+# They also carry no type-specific field. Name, position sur PauseIA, lien and
+# notes are all they have, so the organisation form renders no block for them.
+NEUTRAL_ORG_TYPES = ["ONG", "Entreprise", "Autre"]
+
+
+def allowed_org_types(contact_type):
+    """The organisation types someone of this type de contact can belong to."""
+    own = ORG_TYPE_BY_CONTACT_TYPE.get(contact_type)
+    return ([own] if own else []) + NEUTRAL_ORG_TYPES
+
+
+# --------------------------------------------------------------------------- #
+# Genre d'une intervention / d'un contenu
+# --------------------------------------------------------------------------- #
+# Optional on both. It says what kind of exchange this was, and its only effect
+# is to narrow the people the form offers: choosing « Politique » stops a list
+# of several hundred people from proposing every journaliste in the base.
+#
+# A person's genres follow from what they already are — their type de contact,
+# plus « Autre » for anyone attached to an ONG or an entreprise — so nothing
+# new has to be filled in on a fiche for the filter to work. See person_genres.
+GENRES = ["Politique", "Journalistique", "Religieux", "Autre"]
+
+GENRE_BY_CONTACT_TYPE = {
+    "Journaliste": "Journalistique",
+    "Politique": "Politique",
+    "Religieux·se": "Religieux",
+    "Membre d'une ONG": "Autre",
+    "Membre d'une entreprise": "Autre",
+    "Autre": "Autre",
+}
+
+GENRE_BY_ORG_TYPE = {
+    "Média": "Journalistique",
+    "Groupe politique": "Politique",
+    "Culte": "Religieux",
+    "ONG": "Autre",
+    "Entreprise": "Autre",
+    "Autre": "Autre",
+}
+
+
+def person_genres(contact_type, org_types):
+    """The genres a person answers to, as a « | »-joined string for the form.
+
+    Their type de contact, plus the genre of every organisation they belong to
+    — which is what gives « Autre » to the journaliste who also sits on an NGO
+    board, without taking « Journalistique » away from them.
+    """
+    seen = set()
+    if contact_type in GENRE_BY_CONTACT_TYPE:
+        seen.add(GENRE_BY_CONTACT_TYPE[contact_type])
+    for t in (org_types or "").split("|"):
+        if t in GENRE_BY_ORG_TYPE:
+            seen.add(GENRE_BY_ORG_TYPE[t])
+    return "|".join(g for g in GENRES if g in seen)
 
 # The person's actual function(s)/role(s) — single source of truth for the form.
 # A person can hold several at once (a minister is usually also a député·e), so
@@ -351,10 +433,35 @@ RELIGIOUS_ROLES = _dedup(
     role for religion in RELIGIONS for role in ROLES_BY_RELIGION[religion]
 )
 
+# What someone does inside an ONG or an entreprise. An ONG employs people as
+# well as it recruits volunteers, so the only difference between the two lists
+# is that « Bénévole » has no meaning in a company.
+NGO_COMPANY_COMMON_ROLES = [
+    "Directeur·ice général·e",
+    "Cadre",
+    "Chercheur·euse",
+    "Chargé·e de communication",
+    "Chargé·e de relations",
+    "Employé·e",
+]
+NGO_ROLES = NGO_COMPANY_COMMON_ROLES + ["Bénévole"]
+COMPANY_ROLES = list(NGO_COMPANY_COMMON_ROLES)
+
+# Holding one of these reveals the « Préciser » field: both labels say what
+# somebody is rather than what they do, so the useful part is what comes next
+# — « bénévole sur la campagne courriers », « employé·e au service juridique ».
+# Same arrangement as PORTFOLIO_ROLES and the portefeuille field.
+ROLE_DETAIL_ROLES = ["Bénévole", "Employé·e"]
+
 ROLES_BY_CONTACT_TYPE = {
     "Journaliste": JOURNALIST_ROLES,
     "Politique": POLITICAL_ROLES,
     "Religieux·se": RELIGIOUS_ROLES,
+    "Membre d'une ONG": NGO_ROLES,
+    "Membre d'une entreprise": COMPANY_ROLES,
+    # « Autre » is the type for someone none of the others fits, so there is no
+    # list of functions to offer: whatever they do goes in the notes.
+    "Autre": [],
 }
 
 # Every known function, in a stable order: politiques, then journalistes, then
@@ -362,7 +469,8 @@ ROLES_BY_CONTACT_TYPE = {
 # the order the stored column is written in. No label appears in both the
 # political and the journalistic list; the religious lists share a few labels
 # with each other, which is what _dedup is for.
-ROLES = _dedup(POLITICAL_ROLES + JOURNALIST_ROLES + RELIGIOUS_ROLES)
+ROLES = _dedup(POLITICAL_ROLES + JOURNALIST_ROLES + RELIGIOUS_ROLES
+               + NGO_ROLES + COMPANY_ROLES)
 
 # How several roles are joined inside the single `role` TEXT column. No label in
 # ROLES contains a comma, so this round-trips safely.
@@ -404,6 +512,34 @@ PUBLIC_ROLES = [
 ]
 
 
+def name_sort_key(value):
+    """Sort key putting a person under their nom de famille, not their prénom.
+
+    Names are stored as a single « Prénom Nom » string, so ordering the column
+    raw files everybody under their first name. The nom is taken to be the last
+    word, which is what French names do — « Apolline de Malherbe » files under
+    Malherbe — and a parenthesised nickname is dropped, since « Manuel Dorne
+    (Korben) » is a Dorne and a bracket would sort ahead of every letter.
+    Accents are folded so É files with E rather than after Z, and the prénoms
+    are kept as a tie-breaker.
+
+    Registered on every connection as the SQL function name_key(), so it can be
+    used straight from an ORDER BY.
+    """
+    # Everything from the first comma is a suffix, not part of the name:
+    # « Jean-Paul Vesco, o.p. » is a Vesco, and « o.p. » would otherwise be
+    # read as his nom de famille.
+    plain = re.sub(r"\([^)]*\)", " ", (value or "").split(",")[0])
+    parts = plain.split()
+    if not parts:
+        return ""
+    key = " ".join([parts[-1], *parts[:-1]]).lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", key)
+        if not unicodedata.combining(c)
+    )
+
+
 def split_roles(value):
     """`persons.role` -> list of role labels (empty list when NULL/blank)."""
     return [r.strip() for r in (value or "").split(",") if r.strip()]
@@ -439,6 +575,11 @@ def _roles_from_form(contact_type=None, religion=None):
 def has_portfolio(value):
     """True when any of the person's roles is a government portfolio."""
     return any(r in PORTFOLIO_ROLES for r in split_roles(value))
+
+
+def has_role_detail(value):
+    """True when a role asks to be spelled out — see ROLE_DETAIL_ROLES."""
+    return any(r in ROLE_DETAIL_ROLES for r in split_roles(value))
 
 
 def selected_roles(form):
@@ -511,7 +652,7 @@ PENDING_TABLES = (
     "pending_contents",
 )
 
-CONTENT_TYPES = ["Article", "Interview", "Reportage", "Vidéo"]
+CONTENT_TYPES = ["Article", "Interview", "Reportage", "Vidéo", "Autre"]
 
 INTERVENTION_TYPES = ["Interview", "Plateau TV", "Radio", "Tribune", "Autre"]
 
@@ -609,6 +750,7 @@ def get_db():
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
+        g.db.create_function("name_key", 1, name_sort_key, deterministic=True)
     return g.db
 
 
@@ -649,7 +791,10 @@ def inject_role_helpers():
         "roles_by_religion": ROLES_BY_RELIGION,
         "org_type_by_contact_type": ORG_TYPE_BY_CONTACT_TYPE,
         "org_types": ORG_TYPES,
+        "neutral_org_types": NEUTRAL_ORG_TYPES,
+        "genres": GENRES,
         "political_only_roles": POLITICAL_ROLES,
+        "role_detail_roles": ROLE_DETAIL_ROLES,
         # The vocabularies the organisation and press forms pick from. Exposed
         # globally so the public declaration pages, which share one generic
         # view function, don't each have to be handed their own list.
@@ -734,6 +879,7 @@ def init_db():
             circonscription TEXT,
             email           TEXT,
             portefeuille    TEXT,   -- government portfolio, see PORTFOLIO_ROLES
+            role_detail     TEXT,   -- free text behind a ROLE_DETAIL_ROLES role
             religion        TEXT,   -- Religieux·se only, see RELIGIONS
             territoire      TEXT,   -- Religieux·se only: diocèse, paroisse…
             in_office       INTEGER NOT NULL DEFAULT 1,  -- 0 = mandate ended, kept for history
@@ -833,6 +979,18 @@ def init_db():
             content_id INTEGER NOT NULL REFERENCES contents(id) ON DELETE CASCADE,
             person_id  INTEGER NOT NULL REFERENCES persons(id)  ON DELETE CASCADE,
             PRIMARY KEY (content_id, person_id)
+        );
+
+        -- « À contacter »: people someone has decided to write to, waiting on
+        -- /todo until the box is ticked, after which they live on /fait. The
+        -- list is built by hand from /todo/a-contacter; nothing adds to it
+        -- automatically, and a person appears at most once (PRIMARY KEY).
+        CREATE TABLE IF NOT EXISTS to_contact (
+            person_id  INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+            added_by   INTEGER REFERENCES moderators(id) ON DELETE SET NULL,
+            done       INTEGER NOT NULL DEFAULT 0,
+            done_at    TEXT,
+            created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS mails (
@@ -1153,8 +1311,11 @@ def init_db():
     # The pending_* tables get the same columns so a public declaration keeps
     # them all the way to approval (_form_from_row copies whatever is there).
     for table, cols in (
-        ("persons", ("religion", "territoire")),
-        ("pending_persons", ("religion", "territoire")),
+        # role_detail: the free text behind « Bénévole » or « Employé·e ».
+        # Nullable and added late, exactly like portefeuille: a fiche recorded
+        # before the field existed simply has nothing to say here.
+        ("persons", ("religion", "territoire", "role_detail")),
+        ("pending_persons", ("religion", "territoire", "role_detail")),
         ("organisations", ("religion",)),
         ("pending_organisations", ("religion",)),
     ):
@@ -1162,6 +1323,16 @@ def init_db():
         for col in cols:
             if col not in existing:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+    # --- « Genre » on an intervention and a contenu ------------------------- #
+    # Optional and purely additive: a nullable column on each, NULL meaning
+    # « not stated », which is what every row recorded before the field existed
+    # is. It narrows the people the form offers and nothing else, so no
+    # existing record changes meaning. See GENRES.
+    for table in ("interventions", "contents",
+                  "pending_interventions", "pending_contents"):
+        existing = [r[1] for r in db.execute(f"PRAGMA table_info({table})")]
+        if "genre" not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN genre TEXT")
     db.commit()
     _relax_political_group(db)
     _seed_organisations_from_groups(db)
@@ -1779,18 +1950,36 @@ def _organisation_choices(db, org_type=None):
 
 
 def _person_choices(db):
-    """Every person with their organisations, for the checkbox pickers."""
-    return db.execute(
+    """Every person with their organisations and genres, for the pickers.
+
+    `genres` is what the « Genre » select on the intervention and contenu forms
+    filters on — see person_genres.
+    """
+    rows = db.execute(
         """
         SELECT p.id, p.name, p.contact_type,
                (SELECT GROUP_CONCAT(o.name, ', ')
                   FROM person_organisations po
                   JOIN organisations o ON o.id = po.organisation_id
-                 WHERE po.person_id = p.id) AS organisation_names
+                 WHERE po.person_id = p.id) AS organisation_names,
+               (SELECT GROUP_CONCAT(o.org_type, '|')
+                  FROM person_organisations po
+                  JOIN organisations o ON o.id = po.organisation_id
+                 WHERE po.person_id = p.id) AS org_types
         FROM persons p
-        ORDER BY p.name COLLATE NOCASE
+        ORDER BY name_key(p.name)
         """
     ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "contact_type": r["contact_type"],
+            "organisation_names": r["organisation_names"],
+            "genres": person_genres(r["contact_type"], r["org_types"]),
+        }
+        for r in rows
+    ]
 
 
 def _persons_of(db, join_table, key_col, key_id):
@@ -1805,7 +1994,7 @@ def _persons_of(db, join_table, key_col, key_id):
         FROM persons p
         JOIN {join_table} l ON l.person_id = p.id
         WHERE l.{key_col} = ?
-        ORDER BY p.name COLLATE NOCASE
+        ORDER BY name_key(p.name)
         """,
         (key_id,),
     ).fetchall()
@@ -2037,7 +2226,7 @@ def _save_meeting(db, meeting):
     `meeting` is the existing row when editing, or None when creating.
     """
     people = db.execute(
-        "SELECT id FROM persons ORDER BY name COLLATE NOCASE"
+        "SELECT id FROM persons ORDER BY name_key(name)"
     ).fetchall()
     valid_ids = {str(p["id"]) for p in people}
 
@@ -2208,8 +2397,11 @@ def new_meeting():
             400,
         )
 
+    # Arriving from a person's page pre-ticks them, the same way the contenu
+    # and intervention forms already do.
+    selected = {request.args["person_id"]} if request.args.get("person_id") else set()
     return render_template(
-        "new_meeting.html", form={}, selected_ids=set(), selected_mods=set(), **ctx,
+        "new_meeting.html", form={}, selected_ids=selected, selected_mods=set(), **ctx,
     )
 
 
@@ -2369,6 +2561,42 @@ LATEST_INTERACTION_SQL = """
 """
 
 
+def last_sender_sql(alias="p"):
+    """SQL scalar subquery: who last wrote to this person on PauseIA's behalf.
+
+    The « Qui a reçu / envoyé le courriel » of the most recent courriel envoyé
+    linked to them. A courriel citoyen imported from the campagne mailbox has
+    that field blank (and « Validé par » too), so requiring it is what keeps a
+    citizen's mail from nominating anyone. NULL when nobody here has ever
+    written to them, which /todo shows as « quiconque ».
+
+    `alias` is always a literal from our own call sites, never user input.
+    """
+    return f"""(
+        SELECT mo.name
+          FROM mails ma
+          JOIN mail_persons xp ON xp.mail_id = ma.id
+          JOIN moderators mo ON mo.id = ma.received_by
+         WHERE xp.person_id = {alias}.id AND ma.direction = 'sent'
+         ORDER BY ma.mail_date DESC, ma.id DESC
+         LIMIT 1
+    )"""
+
+
+# How many courriels PauseIA has sent to a person. Only the ones an
+# utilisateurice stands behind count: a courriel citoyen imported from the
+# campagne mailbox has no « Qui a reçu / envoyé » and no « Validé par », so it
+# says nothing about how much *we* have written to them — which is exactly the
+# question the « À contacter » filter asks.
+PAUSEIA_MAIL_COUNT_SQL = """(
+    SELECT COUNT(*)
+      FROM mails ma
+      JOIN mail_persons xp ON xp.mail_id = ma.id
+     WHERE xp.person_id = p.id AND ma.direction = 'sent'
+       AND ma.received_by IS NOT NULL
+)"""
+
+
 @app.route("/todo")
 @login_required
 def todo():
@@ -2411,7 +2639,10 @@ def todo():
         SELECT l.kind, l.rec_id, l.on_date, l.follow_up_date, l.follow_up_done,
                l.follow_up_done_at, l.summary,
                GROUP_CONCAT(p.name, ', ')             AS person_names,
-               GROUP_CONCAT(NULLIF(p.email, ''), ', ') AS person_emails
+               GROUP_CONCAT(NULLIF(p.email, ''), ', ') AS person_emails,
+               -- Whoever wrote to them last is the one to relaunch them; the
+               -- template says « quiconque » when this comes back empty.
+               GROUP_CONCAT(DISTINCT {last_sender_sql("p")}) AS relance_by
         FROM ({LATEST_INTERACTION_SQL}) AS l
         JOIN persons p ON p.id = l.person_id
         WHERE l.follow_up_date IS NOT NULL AND l.follow_up_date <= ?
@@ -2457,6 +2688,7 @@ def todo():
         "todo.html",
         meetings_today=meetings_today,
         due=due,
+        to_contact=_to_contact_rows(db, done=0),
         upcoming=upcoming,
         signed_up=signed_up,
         moderators=_moderators(db),
@@ -2520,6 +2752,7 @@ def fait():
         "fait.html",
         meetings_done=meetings_done,
         relances_done=relances_done,
+        contacted=_to_contact_rows(db, done=1),
         today=date.today().isoformat(),
     )
 
@@ -2552,6 +2785,181 @@ def toggle_follow_up_done(kind, rec_id):
     )
     db.commit()
     return redirect(request.referrer or url_for("todo"))
+
+
+# --------------------------------------------------------------------------- #
+# « À contacter » — people someone has decided to write to
+# --------------------------------------------------------------------------- #
+# A plain to-do list of people, built by hand and ticked off like a relance:
+# ticking moves the person to /fait, unticking brings them back. Nothing puts
+# anyone on the list automatically — deciding who is worth writing to is the
+# whole point of the list, so it is never guessed.
+
+def _to_contact_rows(db, done):
+    """The « À contacter » list, pending (done=0) or dealt with (done=1)."""
+    return db.execute(
+        f"""
+        SELECT p.id, p.name, p.email, p.role, p.contact_type,
+               t.created_at, t.done_at,
+               (SELECT GROUP_CONCAT(o.name, ', ')
+                  FROM person_organisations po
+                  JOIN organisations o ON o.id = po.organisation_id
+                 WHERE po.person_id = p.id)     AS organisation_names,
+               (SELECT mo.name FROM moderators mo
+                 WHERE mo.id = t.added_by)      AS added_by_name,
+               {PAUSEIA_MAIL_COUNT_SQL}         AS pauseia_mails
+        FROM to_contact t
+        JOIN persons p ON p.id = t.person_id
+        WHERE t.done = ?
+        ORDER BY {"name_key(p.name)" if not done
+                  else "COALESCE(t.done_at, t.created_at) DESC, name_key(p.name)"}
+        """,
+        (done,),
+    ).fetchall()
+
+
+def _to_int(value):
+    """A whole number from a form field, or None when blank or unusable.
+
+    A filter nobody filled in must not silently become 0, which would be a
+    filter of its own.
+    """
+    value = (value or "").strip()
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+@app.route("/todo/a-contacter")
+@login_required
+def to_contact_picker():
+    """Pick people to add to « À contacter ».
+
+    Three filters, because they are the questions actually asked when building
+    such a list: which organisation, which type de contact, and how much we
+    have already written to them (PAUSEIA_MAIL_COUNT_SQL — courriels citoyens
+    do not count).
+    """
+    db = get_db()
+    org_id = _valid_organisation(db, request.args.get("org"))
+    contact_type = (request.args.get("contact_type") or "").strip()
+    if contact_type not in CONTACT_TYPES:
+        contact_type = ""
+    max_mails = _to_int(request.args.get("max_mails"))
+    min_mails = _to_int(request.args.get("min_mails"))
+
+    where, params = [], []
+    if org_id is not None:
+        where.append(
+            "p.id IN (SELECT po.person_id FROM person_organisations po "
+            "WHERE po.organisation_id = ?)"
+        )
+        params.append(org_id)
+    if contact_type:
+        where.append("p.contact_type = ?")
+        params.append(contact_type)
+    if min_mails is not None:
+        where.append(f"{PAUSEIA_MAIL_COUNT_SQL} >= ?")
+        params.append(min_mails)
+    if max_mails is not None:
+        where.append(f"{PAUSEIA_MAIL_COUNT_SQL} <= ?")
+        params.append(max_mails)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+
+    rows = db.execute(
+        f"""
+        SELECT p.id, p.name, p.role, p.contact_type,
+               (SELECT GROUP_CONCAT(o.name, ', ')
+                  FROM person_organisations po
+                  JOIN organisations o ON o.id = po.organisation_id
+                 WHERE po.person_id = p.id) AS organisation_names,
+               {PAUSEIA_MAIL_COUNT_SQL}     AS pauseia_mails,
+               EXISTS (SELECT 1 FROM to_contact t
+                        WHERE t.person_id = p.id AND t.done = 0) AS already
+        FROM persons p
+        {clause}
+        ORDER BY name_key(p.name)
+        """,
+        params,
+    ).fetchall()
+
+    # Grouped by organisation so a whole newsroom, group or diocèse can be
+    # ticked in one go. Someone who belongs to two organisations appears under
+    # both; the form collapses the duplicates on submit, and the JS keeps the
+    # boxes in step so ticking one ticks the other.
+    groups = defaultdict(list)
+    for r in rows:
+        for name in (r["organisation_names"] or "").split(", "):
+            groups[name or "Sans organisation"].append(r)
+    grouped = sorted(
+        groups.items(),
+        # « Sans organisation » is not an organisation: it goes last.
+        key=lambda kv: (kv[0] == "Sans organisation", kv[0].lower()),
+    )
+
+    return render_template(
+        "to_contact_picker.html",
+        grouped=grouped,
+        total=len(rows),
+        organisations=_organisation_choices(db),
+        moderators=_moderators(db),
+        org=str(org_id) if org_id is not None else "",
+        contact_type=contact_type,
+        min_mails="" if min_mails is None else min_mails,
+        max_mails="" if max_mails is None else max_mails,
+    )
+
+
+@app.route("/todo/a-contacter/ajouter", methods=["POST"])
+@login_required
+def add_to_contact():
+    db = get_db()
+    person_ids = _ids_from_form(db, "person_ids", "persons")
+    added_by = _valid_moderator(db, request.form.get("added_by"))
+    if not person_ids:
+        flash("Sélectionnez au moins une personne à contacter.", "error")
+        return redirect(request.referrer or url_for("to_contact_picker"))
+    # Someone already on the list stays where they are, ticked or not: OR
+    # IGNORE so re-adding them never silently un-ticks work already done.
+    db.executemany(
+        "INSERT OR IGNORE INTO to_contact (person_id, added_by, created_at) "
+        "VALUES (?, ?, ?)",
+        [(pid, added_by, _now()) for pid in person_ids],
+    )
+    db.commit()
+    n = len(person_ids)
+    flash(f"{n} personne{'' if n == 1 else 's'} ajoutée{'' if n == 1 else 's'} "
+          "à « À contacter ».", "success")
+    return redirect(url_for("todo"))
+
+
+@app.route("/todo/a-contacter/<int:person_id>/done", methods=["POST"])
+@login_required
+def toggle_to_contact_done(person_id):
+    db = get_db()
+    if db.execute("SELECT 1 FROM to_contact WHERE person_id = ?",
+                  (person_id,)).fetchone() is None:
+        abort(404)
+    db.execute(
+        "UPDATE to_contact SET done = 1 - done, "
+        "done_at = CASE WHEN done = 0 THEN ? ELSE NULL END WHERE person_id = ?",
+        (date.today().isoformat(), person_id),
+    )
+    db.commit()
+    return redirect(request.referrer or url_for("todo"))
+
+
+@app.route("/todo/a-contacter/<int:person_id>/retirer", methods=["POST"])
+@login_required
+def remove_to_contact(person_id):
+    """Drop someone from the list for good. Only their place on the list goes:
+    the fiche and everything attached to it are untouched."""
+    db = get_db()
+    db.execute("DELETE FROM to_contact WHERE person_id = ?", (person_id,))
+    db.commit()
+    flash("Personne retirée de « À contacter ».", "success")
+    return redirect(request.referrer or url_for("fait"))
 
 
 @app.route("/todo/rencontre/<int:meeting_id>/inscriptions", methods=["POST"])
@@ -2933,7 +3341,7 @@ def people():
         params.append(contact_type)
     if where:
         sql += " WHERE " + " AND ".join(where)
-    persons = db.execute(sql + " ORDER BY p.name COLLATE NOCASE", params).fetchall()
+    persons = db.execute(sql + " ORDER BY name_key(p.name)", params).fetchall()
     # Per-type totals for the filter chips, so switching says how many there are
     # before you switch. Computed unfiltered: they are the sizes of the choices.
     counts = dict(
@@ -2967,6 +3375,11 @@ def _save_person(db, person):
     portefeuille = (request.form.get("portefeuille") or "").strip()
     if not has_portfolio(role):
         portefeuille = ""
+    # Same rule for « Préciser »: kept only while a role still asks for it, so
+    # unticking « Bénévole » cannot leave its explanation behind on the record.
+    role_detail = (request.form.get("role_detail") or "").strip()
+    if not has_role_detail(role):
+        role_detail = ""
     # Mandate details belong to an elected official; a journaliste has neither.
     circonscription = (request.form.get("circonscription") or "").strip()
     if contact_type != "Politique":
@@ -2991,11 +3404,11 @@ def _save_person(db, person):
     # The organisations offered depend on the type de contact, so only the ones
     # of the matching type are kept: a journaliste cannot end up in a groupe
     # politique by posting its id.
-    wanted_org_type = ORG_TYPE_BY_CONTACT_TYPE.get(contact_type)
+    wanted_org_types = allowed_org_types(contact_type)
     organisation_ids = [
         oid for oid in _ids_from_form(db, "organisation_ids", "organisations")
         if db.execute("SELECT org_type FROM organisations WHERE id = ?",
-                      (oid,)).fetchone()["org_type"] == wanted_org_type
+                      (oid,)).fetchone()["org_type"] in wanted_org_types
     ]
 
     errors = []
@@ -3003,7 +3416,11 @@ def _save_person(db, person):
         errors.append("Le nom est obligatoire.")
     if contact_type not in CONTACT_TYPES:
         errors.append("Le type de contact est obligatoire.")
-    elif contact_type == "Politique" and not organisation_ids:
+    elif contact_type == "Politique" and not any(
+        db.execute("SELECT org_type FROM organisations WHERE id = ?",
+                   (oid,)).fetchone()["org_type"] == "Groupe politique"
+        for oid in organisation_ids
+    ):
         # A politique's groupe politique was mandatory before the merge and
         # stays so: it is how /repartition and the lists group them.
         errors.append("Le groupe politique est obligatoire.")
@@ -3019,7 +3436,8 @@ def _save_person(db, person):
     if errors:
         return None, errors
 
-    values = (name, contact_type, role or None, portefeuille or None, stance,
+    values = (name, contact_type, role or None, portefeuille or None,
+              role_detail or None, stance,
               first_contacted or None, notes or None, circonscription or None,
               email or None, phone or None, social_links or None,
               religion or None, territoire or None,
@@ -3028,11 +3446,11 @@ def _save_person(db, person):
         cur = db.execute(
             """
             INSERT INTO persons (
-                name, contact_type, role, portefeuille, stance, first_contacted,
-                notes, circonscription, email, phone, social_links,
-                religion, territoire,
+                name, contact_type, role, portefeuille, role_detail, stance,
+                first_contacted, notes, circonscription, email, phone,
+                social_links, religion, territoire,
                 added_by, validated_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (*values, _now()),
         )
@@ -3042,7 +3460,8 @@ def _save_person(db, person):
         db.execute(
             """
             UPDATE persons SET name = ?, contact_type = ?, role = ?,
-                portefeuille = ?, stance = ?, first_contacted = ?, notes = ?,
+                portefeuille = ?, role_detail = ?, stance = ?,
+                first_contacted = ?, notes = ?,
                 circonscription = ?, email = ?, phone = ?, social_links = ?,
                 religion = ?, territoire = ?,
                 added_by = ?, validated_by = ? WHERE id = ?
@@ -3298,6 +3717,10 @@ def _save_organisation(db, organisation):
         chambre = religion = ""
     elif org_type == "Culte":
         media_type = orientation = chambre = ""
+    elif org_type in NEUTRAL_ORG_TYPES:
+        # An ONG or une entreprise has none of the four: position sur PauseIA,
+        # lien and notes are the whole fiche.
+        media_type = orientation = chambre = religion = ""
     else:
         media_type = orientation = religion = ""
 
@@ -3316,6 +3739,8 @@ def _save_organisation(db, organisation):
         # before anyone decides which of the seven it is filed under.
         if religion and religion not in RELIGIONS:
             errors.append("La religion indiquée est inconnue.")
+    elif org_type in NEUTRAL_ORG_TYPES:
+        pass  # nothing else to ask; the fields above were already cleared
     elif chambre and chambre not in CHAMBERS:
         errors.append("La chambre indiquée est inconnue.")
     if stance not in STANCES:
@@ -3473,7 +3898,7 @@ def organisation_detail(organisation_id):
         SELECT p.id, p.name, p.contact_type, p.role, p.stance FROM persons p
         JOIN person_organisations po ON po.person_id = p.id
         WHERE po.organisation_id = ?
-        ORDER BY p.name COLLATE NOCASE
+        ORDER BY name_key(p.name)
         """,
         (organisation_id,),
     ).fetchall()
@@ -3513,6 +3938,7 @@ def _save_content(db, content):
     organisation_id = _valid_organisation(db, request.form.get("organisation_id"))
     person_ids = _ids_from_form(db, "person_ids", "persons")
     content_type = (request.form.get("content_type") or "").strip()
+    genre = (request.form.get("genre") or "").strip()
     link, link_ok = _to_url(request.form.get("link"))
     published_on, date_ok = _to_iso(request.form.get("published_on"))
     summary = (request.form.get("summary") or "").strip()
@@ -3526,6 +3952,8 @@ def _save_content(db, content):
         errors.append("Sélectionnez au moins une personne.")
     if content_type not in CONTENT_TYPES:
         errors.append("Le type de contenu est obligatoire.")
+    if genre and genre not in GENRES:
+        errors.append("Le genre du contenu est invalide.")
     if not link:
         errors.append("Le lien vers le contenu est obligatoire.")
     elif not link_ok:
@@ -3542,14 +3970,14 @@ def _save_content(db, content):
     if errors:
         return None, errors
 
-    values = (organisation_id, content_type, link, published_on, summary or None,
-              recorded_by, validated_by)
+    values = (organisation_id, content_type, genre or None, link, published_on,
+              summary or None, recorded_by, validated_by)
     if content is None:
         cur = db.execute(
             """
-            INSERT INTO contents (organisation_id, content_type, link,
+            INSERT INTO contents (organisation_id, content_type, genre, link,
                 published_on, summary, recorded_by, validated_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (*values, _now()),
         )
@@ -3558,8 +3986,9 @@ def _save_content(db, content):
         content_id = content["id"]
         db.execute(
             """
-            UPDATE contents SET organisation_id = ?, content_type = ?, link = ?,
-                published_on = ?, summary = ?, recorded_by = ?, validated_by = ?
+            UPDATE contents SET organisation_id = ?, content_type = ?, genre = ?,
+                link = ?, published_on = ?, summary = ?, recorded_by = ?,
+                validated_by = ?
             WHERE id = ?
             """,
             (*values, content_id),
@@ -3684,6 +4113,7 @@ def _save_intervention(db, intervention):
     person_ids = _ids_from_form(db, "person_ids", "persons")
     participant_ids = _ids_from_form(db, "participant_ids", "moderators")
     intervention_type = (request.form.get("intervention_type") or "").strip()
+    genre = (request.form.get("genre") or "").strip()
     link, link_ok = _to_url(request.form.get("link"))
     intervention_date, date_ok = _to_iso(request.form.get("intervention_date"))
     summary = (request.form.get("summary") or "").strip()
@@ -3699,6 +4129,8 @@ def _save_intervention(db, intervention):
         errors.append("Indiquez qui est intervenu pour PauseIA.")
     if intervention_type not in INTERVENTION_TYPES:
         errors.append("Le type d'intervention est obligatoire.")
+    if genre and genre not in GENRES:
+        errors.append("Le genre de l'intervention est invalide.")
     if not link:
         errors.append("Le lien vers l'intervention est obligatoire.")
     elif not link_ok:
@@ -3715,15 +4147,15 @@ def _save_intervention(db, intervention):
     if errors:
         return None, errors
 
-    values = (organisation_id, intervention_date, intervention_type, link,
-              summary or None, recorded_by, validated_by)
+    values = (organisation_id, intervention_date, intervention_type, genre or None,
+              link, summary or None, recorded_by, validated_by)
     if intervention is None:
         cur = db.execute(
             """
             INSERT INTO interventions (organisation_id, intervention_date,
-                intervention_type, link, summary, recorded_by, validated_by,
-                created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                intervention_type, genre, link, summary, recorded_by,
+                validated_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (*values, _now()),
         )
@@ -3733,8 +4165,8 @@ def _save_intervention(db, intervention):
         db.execute(
             """
             UPDATE interventions SET organisation_id = ?, intervention_date = ?,
-                intervention_type = ?, link = ?, summary = ?, recorded_by = ?,
-                validated_by = ?
+                intervention_type = ?, genre = ?, link = ?, summary = ?,
+                recorded_by = ?, validated_by = ?
             WHERE id = ?
             """,
             (*values, intervention_id),
@@ -4015,9 +4447,11 @@ def new_mail():
             400,
         )
 
+    # Arriving from a person's page pre-ticks them.
+    selected = {request.args["person_id"]} if request.args.get("person_id") else set()
     return render_template(
         "new_mail.html", people=people, moderators=mods, directions=MAIL_DIRECTIONS,
-        form={}, selected_ids=set(), current=None, today=date.today().isoformat(),
+        form={}, selected_ids=selected, current=None, today=date.today().isoformat(),
         action_url=url_for("new_mail"), heading="Nouveau courriel",
         cancel_url=url_for("mails"),
     )
@@ -4346,7 +4780,7 @@ def _public_person_names(db):
     return db.execute(
         f"SELECT name, role FROM persons "
         f"WHERE contact_type = 'Politique' AND ({where}) "
-        f"ORDER BY name COLLATE NOCASE",
+        f"ORDER BY name_key(name)",
         params,
     ).fetchall()
 
@@ -4380,6 +4814,9 @@ def declarer_person():
         portefeuille = (request.form.get("portefeuille") or "").strip()
         if not has_portfolio(role):
             portefeuille = ""
+        role_detail = (request.form.get("role_detail") or "").strip()
+        if not has_role_detail(role):
+            role_detail = ""
         proposed_organisation = (request.form.get("proposed_organisation") or "").strip()
         stance = (request.form.get("stance") or "").strip()
         first_contacted, fc_ok = _to_iso(request.form.get("first_contacted"))
@@ -4399,14 +4836,14 @@ def declarer_person():
             db.execute(
                 """
                 INSERT INTO pending_persons (
-                    name, contact_type, role, portefeuille, proposed_organisation,
-                    religion, territoire,
+                    name, contact_type, role, portefeuille, role_detail,
+                    proposed_organisation, religion, territoire,
                     stance, first_contacted, email, phone, notes, submitted_by,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (name, contact_type or None, role or None, portefeuille or None,
-                 proposed_organisation or None,
+                 role_detail or None, proposed_organisation or None,
                  religion or None, territoire or None, stance or None,
                  first_contacted or None,
                  (request.form.get("email") or "").strip() or None,
@@ -4471,6 +4908,11 @@ def _declare(template, validate, **extra):
     return render_template(
         template, form=request.form if request.method == "POST" else {},
         organisation_names=_public_organisation_names(get_db()),
+        # Same treatment as the organisations: « Personnes concernées » stays
+        # free text (a declarant may name somebody with no fiche yet) but comes
+        # with a picker of the people it is safe to list — see
+        # _public_person_names, which is a whitelist, not the whole base.
+        person_names=_public_person_names(get_db()),
         directions=MAIL_DIRECTIONS, today=date.today().isoformat(),
         captcha_question=_new_captcha(), **extra,
     )
@@ -4539,6 +4981,12 @@ def declarer_content():
         elif not date_ok:
             errors.append("La date de publication est invalide (format JJ/MM/AAAA).")
         content_type = _field("content_type")
+        # Asked of a declarant and of nobody else: « Autre » is there for
+        # whatever the four named types miss, so there is always an answer.
+        if not content_type:
+            errors.append("Le type de contenu est obligatoire.")
+        elif content_type not in CONTENT_TYPES:
+            errors.append("Le type de contenu est invalide.")
         values = (proposed_organisation, proposed_people,
                   content_type if content_type in CONTENT_TYPES else None,
                   link, published_on, _field("summary") or None,
@@ -4565,6 +5013,12 @@ def declarer_intervention():
         elif not date_ok:
             errors.append("La date de l'intervention est invalide (format JJ/MM/AAAA).")
         intervention_type = _field("intervention_type")
+        # Obligatoire ici et nulle part ailleurs, comme le type de contenu :
+        # « Autre » est là pour ce que les quatre types nommés ne couvrent pas.
+        if not intervention_type:
+            errors.append("Le type d'intervention est obligatoire.")
+        elif intervention_type not in INTERVENTION_TYPES:
+            errors.append("Le type d'intervention est invalide.")
         values = (proposed_organisation, proposed_people, intervention_date,
                   intervention_type if intervention_type in INTERVENTION_TYPES else None,
                   link, _field("summary") or None,

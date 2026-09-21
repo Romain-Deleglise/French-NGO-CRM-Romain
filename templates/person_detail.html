@@ -22,7 +22,9 @@
 <div class="card">
   <div class="grid-2">
     <div class="field">
-      <label>{% if p['contact_type'] == 'Politique' %}Groupe politique{% else %}Média{% if organisations|length > 1 %}s{% endif %}{% endif %}</label>
+      {# Six types de contact now, each with its own kind of organisation, so
+         the label names the field rather than the type. #}
+      <label>Organisation{% if organisations|length > 1 %}s{% endif %}</label>
       <p>
         {% for o in organisations %}
           <a class="tag" href="{{ url_for('organisation_detail', organisation_id=o['id']) }}">{{ o['name'] }}</a>
@@ -44,6 +46,12 @@
     <div class="field">
       <label>Portefeuille</label>
       <p>{{ p['portefeuille'] }}</p>
+    </div>
+    {% endif %}
+    {% if p['role_detail'] %}
+    <div class="field">
+      <label>Préciser</label>
+      <p>{{ p['role_detail'] }}</p>
     </div>
     {% endif %}
   </div>
@@ -154,11 +162,15 @@
   </div>
 </div>
 
+{# Every pane carries the same small line, full or empty, so « et maintenant ? »
+   is answered in the same place and the same way throughout. #}
 <h2 class="section-title section-interventions">Interventions</h2>
 {{ ui.interventions_table(interventions) }}
+<p class="hint"><a href="{{ url_for('new_intervention', person_id=p['id']) }}">+ Nouvelle intervention</a> avec cette personne.</p>
 
 <h2 class="section-title section-contents">Contenus</h2>
 {{ ui.contents_table(contents) }}
+<p class="hint"><a href="{{ url_for('new_content', person_id=p['id']) }}">+ Nouveau contenu</a> de cette personne.</p>
 
 <h2 class="section-title section-meetings">Rencontres</h2>
 {% if meetings %}
@@ -181,6 +193,7 @@
 {% else %}
 <div class="empty"><p>Aucune rencontre enregistrée avec cette personne pour le moment.</p></div>
 {% endif %}
+<p class="hint"><a href="{{ url_for('new_meeting', person_id=p['id']) }}">+ Nouvelle rencontre</a> avec cette personne.</p>
 
 <h2 class="section-title section-mails">Courriels</h2>
 {% if conversations %}
@@ -216,4 +229,5 @@
 {% else %}
 <div class="empty"><p>Aucun courriel échangé avec cette personne pour le moment.</p></div>
 {% endif %}
+<p class="hint"><a href="{{ url_for('new_mail', person_id=p['id']) }}">+ Nouveau courriel</a> avec cette personne.</p>
 {% endblock %}

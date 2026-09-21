@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Ajouter à « À contacter »{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Ajouter des personnes à contacter</h1>
+  <a class="btn btn-ghost" href="{{ url_for('todo') }}">Retour au TODO</a>
+</div>
+
+{# Filters. « Courriels PauseIA » ne compte que les courriels envoyés qu'un·e
+   utilisateurice assume : un courriel citoyen importé de la boîte campagne n'a
+   ni « Qui a reçu / envoyé » ni « Validé par », et ne dit donc rien de ce que
+   *nous* avons écrit à la personne. #}
+<form class="card form" method="get" action="{{ url_for('to_contact_picker') }}">
+  <div class="grid-2">
+    <div class="field">
+      <label for="org">Organisation</label>
+      <select id="org" name="org">
+        <option value="">Toutes les organisations</option>
+        {% for group in org_types %}
+          {% set in_group = organisations | selectattr('org_type', 'equalto', group) | list %}
+          {% if in_group %}
+          <optgroup label="{{ group }}">
+            {% for o in in_group %}
+              <option value="{{ o['id'] }}" {% if org == o['id']|string %}selected{% endif %}>
+                {{ o['name'] }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="contact_type">Type de contact</label>
+      <select id="contact_type" name="contact_type">
+        <option value="">Tous les types</option>
+        {% for t in contact_types %}
+          <option value="{{ t }}" {% if contact_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Courriels déjà envoyés par PauseIA</label>
+    <div class="grid-2">
+      <input type="number" name="min_mails" min="0" inputmode="numeric"
+             placeholder="au moins…" value="{{ min_mails }}">
+      <input type="number" name="max_mails" min="0" inputmode="numeric"
+             placeholder="au plus…" value="{{ max_mails }}">
+    </div>
+    <p class="hint">Ne comptent que les courriels envoyés par un·e membre de
+      PauseIA. Les courriels citoyens de la campagne ne comptent pas.</p>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" type="submit">Filtrer</button>
+    <a class="btn btn-ghost" href="{{ url_for('to_contact_picker') }}">Effacer les filtres</a>
+  </div>
+</form>
+
+{% if grouped %}
+<form method="post" action="{{ url_for('add_to_contact') }}" data-people-form>
+  <div class="field">
+    <label for="added_by">Ajoutées par <span class="muted">(facultatif)</span></label>
+    <select id="added_by" name="added_by" data-remember="added_by">
+      <option value="">— Personne en particulier —</option>
+      {% for mo in moderators %}
+        <option value="{{ mo['id'] }}">{{ mo['name'] }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <p class="muted count">{{ total }} personne{{ '' if total == 1 else 's' }}
+    correspond{{ '' if total == 1 else 'ent' }} aux filtres.</p>
+
+  {# Quelqu'un qui appartient à deux organisations apparaît sous les deux ; les
+     cases portant le même identifiant restent synchronisées (JS) et l'ajout ne
+     la compte qu'une fois. #}
+  {% for org_name, people in grouped %}
+  <section class="card" data-people-group>
+    <div class="page-head">
+      <h2 class="section-title">{{ org_name }}
+        <span class="muted">({{ people|length }})</span></h2>
+      <button class="btn" type="button" data-check-all>Tout cocher</button>
+    </div>
+    <div class="checklist">
+      {% for p in people %}
+        <label class="check">
+          <input type="checkbox" name="person_ids" value="{{ p['id'] }}"
+                 {% if p['already'] %}disabled{% endif %}>
+          {{ p['name'] }}
+          <span class="muted">— {{ p['pauseia_mails'] }} courriel{{ '' if p['pauseia_mails'] == 1 else 's' }}
+            PauseIA{% if p['role'] %} · {{ p['role'] }}{% endif %}</span>
+          {% if p['already'] %}<span class="tag">déjà dans la liste</span>{% endif %}
+        </label>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+
+  <div class="actions">
+    <button class="btn btn-primary" type="submit">Ajouter à « À contacter »</button>
+    <a class="btn btn-ghost" href="{{ url_for('todo') }}">Annuler</a>
+  </div>
+</form>
+{% else %}
+<div class="empty">
+  <p>Aucune personne ne correspond à ces filtres.</p>
+  <a class="btn" href="{{ url_for('to_contact_picker') }}">Effacer les filtres</a>
+</div>
+{% endif %}
+{% endblock %}
