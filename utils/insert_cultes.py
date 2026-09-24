@@ -141,6 +141,9 @@ def main():
     if not os.path.exists(DB):
         sys.exit(f"Base introuvable : {DB}")
     db = sqlite3.connect(DB)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
 

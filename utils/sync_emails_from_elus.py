@@ -127,6 +127,9 @@ def main():
         f">= {args.min_confidence}.")
 
     db = sqlite3.connect(args.db)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     persons = db.execute("SELECT id, name, email FROM persons").fetchall()
 
     filled, updated, already_ok, no_match, conflict_kept = 0, 0, 0, 0, 0

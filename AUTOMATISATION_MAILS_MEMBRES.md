@@ -306,3 +306,34 @@ processus attend bien que le premier ait fini.
 
 `CRM_DB_PATH` permet au passage de pointer la base ailleurs, comme les scripts
 `utils/` le font déjà avec `IMAP_DB_PATH`.
+
+
+---
+
+## Concurrence avec l'application (septembre 2026)
+
+Un `--backfill` sur une boîte de 2 079 messages est mort sur
+`sqlite3.OperationalError: database is locked`. Deux causes, corrigées
+ensemble :
+
+**Personne n'attendait.** Ni les connexions de l'app (`get_db`), ni les scripts
+`utils/` ne posaient de `busy_timeout` : à la première contention, SQLite
+échouait immédiatement au lieu de patienter. Désormais 15 s côté app, 30 s côté
+scripts.
+
+**L'import gardait une seule transaction du début à la fin.** Sur des milliers
+de messages, ça verrouille la base en écriture pendant plusieurs minutes :
+l'application ne peut plus rien écrire, et la moindre écriture de sa part tuait
+le script. L'import valide maintenant **tous les 50 messages**
+(`COMMIT_EVERY`).
+
+Conséquence à connaître : **un run interrompu n'est plus annulé en totalité.**
+Avant, un Ctrl-C ramenait la base exactement à son état initial. Maintenant la
+première moitié reste importée — ce qui est voulu : `last_uid` avance avec
+chaque validation, donc une relance reprend où on s'était arrêté au lieu de tout
+refaire, et `imported_mails` empêche tout doublon.
+
+Si la contention persiste, l'étape suivante serait de passer la base en
+**journal WAL** (`PRAGMA journal_mode=WAL`), où lecteurs et écrivain ne se
+bloquent plus. C'est un changement persistant sur le fichier de production, donc
+à décider séparément — les deux correctifs ci-dessus devraient suffire.

@@ -755,6 +755,11 @@ def get_db():
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
+        # The utils/ importers write to this same file, and a long import used
+        # to make every request that touched the database fail outright with
+        # "database is locked". Wait for the writer instead of 500-ing at the
+        # first contention.
+        g.db.execute("PRAGMA busy_timeout = 15000")
         g.db.create_function("name_key", 1, name_sort_key, deterministic=True)
     return g.db
 

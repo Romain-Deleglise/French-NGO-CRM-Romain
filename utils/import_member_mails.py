@@ -73,6 +73,19 @@ GROUP_ADDRESSES = {
 
 IMPORT_SOURCE = "Import automatique (mails membres)"
 
+# Commit every N messages instead of once at the very end. A --backfill sweep
+# inspects thousands of messages, and a single transaction over the whole run
+# holds the write lock for minutes: the Flask app cannot write meanwhile, and
+# any write it does attempt first makes this script die on "database is
+# locked". Short transactions keep both alive.
+#
+# It also makes an interrupted run resumable rather than wasted, since
+# `last_uid` advances with each commit — at the cost of the all-or-nothing
+# property: stopping half way now leaves the first half imported. That is safe,
+# because `imported_mails` dedups by Message-ID and a rerun picks up where this
+# left off.
+COMMIT_EVERY = 50
+
 
 def is_official(addr):
     """On a domain of an organisation we follow (a chamber, a média, …).
@@ -572,6 +585,9 @@ def main():
     mailbox = os.environ.get("MEMBER_IMAP_MAILBOX", "INBOX")
 
     db = sqlite3.connect(db_path)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.execute("PRAGMA foreign_keys = ON")
     if not args.dry_run:
         ensure_state_table(db)
@@ -593,7 +609,7 @@ def main():
         imported = dup = skipped = queued = max_uid = 0
         max_uid = last_uid
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        for uid in uids:
+        for index, uid in enumerate(uids):
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
             if status == "OK" and data and data[0]:
                 msg = email.message_from_bytes(data[0][1])
@@ -614,6 +630,11 @@ def main():
                         if args.verbose:
                             log(f"  [skip] {decoded(msg.get('Subject'))!r}")
             max_uid = max(max_uid, uid)
+            if not args.dry_run and (index + 1) % COMMIT_EVERY == 0:
+                # UIDs come in ascending order, so recording the highest one
+                # seen is an honest resume point.
+                set_last_uid(db, "members", max_uid)
+                db.commit()
 
         if not args.dry_run:
             set_last_uid(db, "members", max_uid)

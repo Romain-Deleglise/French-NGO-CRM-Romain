@@ -74,8 +74,12 @@ def main():
         sys.exit(f"Source introuvable : {src_path}")
 
     dst = sqlite3.connect(DB_PATH)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    dst.execute("PRAGMA busy_timeout = 30000")
     dst.row_factory = sqlite3.Row
     src = sqlite3.connect(src_path)
+    src.execute("PRAGMA busy_timeout = 30000")
     src.row_factory = sqlite3.Row
 
     mods = moderator_map(dst, src)

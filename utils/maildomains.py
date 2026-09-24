@@ -174,6 +174,9 @@ def main():
     args = parser.parse_args()
 
     db = sqlite3.connect(args.db)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     try:
         domains = collect(db, args.min_persons)
     finally:
