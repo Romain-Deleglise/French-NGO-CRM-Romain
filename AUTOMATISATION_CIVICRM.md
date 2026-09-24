@@ -110,6 +110,53 @@ repartirait en file indéfiniment.
 
 ---
 
+## Amorçage : casser l'œuf et la poule
+
+Le circuit ne démarre pas tout seul. La règle Google Workspace ne copie dans la
+boîte d'audit que les mails touchant un **domaine parlementaire**, donc :
+
+```
+aucun échange presse dans la boîte d'audit
+  → aucune adresse presse en file
+    → aucune fiche journaliste
+      → maildomains --google-rule ne sort que 3 domaines
+        → la règle Google n'est jamais élargie
+```
+
+`civicrm-seed.sh` injecte le circuit par un bout : il crée les fiches d'**un
+seul groupe restreint** (12 « Presse - Nationale » par défaut), ce qui fait
+apparaître les domaines de leurs médias, qu'on colle dans la règle Workspace.
+La résolution à la demande prend le relais ensuite.
+
+```bash
+sudo /opt/scripts/civicrm-seed.sh                      # dry run
+sudo /opt/scripts/civicrm-seed.sh --commit
+sudo SEED_GROUP_ID=28 /opt/scripts/civicrm-seed.sh --commit   # un autre groupe
+```
+
+**Ce n'est pas l'import de masse qu'on a refusé.** `civicrm_lookup.py --seed`
+refuse au-delà de **1 500 fiches** (`SEED_SOFT_CAP`) sans `--force` : au-delà,
+les sélecteurs de personnes des formulaires de rencontre et de courriel
+deviennent inutilisables. Un amorçage doit rester étroit.
+
+Vérifié sur un jeu réaliste — 40 journalistes répartis sur 8 médias : 40 fiches,
+10 organisations Média, 42 liens, et la règle Google passe de 3 à 11 domaines.
+Avec seulement une ou deux fiches par média, rien ne sortirait : un domaine ne
+compte qu'à partir de **deux personnes connues**, ce qui est la règle qui écarte
+les adresses personnelles.
+
+La dernière étape de `civicrm-seed.sh` affiche directement la ligne à coller :
+
+```
+== 3/3  The domains to paste into the Google Workspace rule
+assemblee-nationale.fr europarl.europa.eu franceinfo.fr latribune.fr lefigaro.fr …
+```
+
+Tant qu'un domaine n'est pas dans cette règle, Google ne copie aucun de ses
+mails et rien en aval ne peut le rapprocher — quel que soit le code de ce dépôt.
+
+---
+
 ## Correspondance des données
 
 | CiviCRM | Ici | Note |

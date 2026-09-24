@@ -315,6 +315,84 @@ def cmd_retry_absent(db, args):
     return 0
 
 
+# Above this, a seed stops being a seed. The rencontre and courriel forms render
+# one <option> *and* one checkbox per person, so a few hundred fiches is a
+# working tool and several thousand is an unusable one. --force is there for a
+# deliberate choice, never for a slip.
+SEED_SOFT_CAP = 1500
+
+
+def cmd_seed(db, args):
+    """Create fiches for a whole CiviCRM group, to get the cycle started.
+
+    The chicken and egg: the Google Workspace rule only copies mail touching a
+    parliamentary domain, so no press exchange ever reaches the audit mailbox,
+    so no press address is ever queued, so no journalist fiche exists, so
+    `maildomains --google-rule` still prints three domains. Seeding one narrow
+    group breaks that — their médias' domains appear at once and can be pasted
+    into the Workspace rule, after which the on-demand path takes over.
+
+    Narrow is the point. This is not the bulk import we deliberately did not do.
+    """
+    with open(args.seed, encoding="utf-8") as fh:
+        records = json.load(fh)
+    try:
+        assert_contract(records, CONTACT_FIELDS, "contact")
+    except ContractError as exc:
+        log(f"ABANDON — contrat CiviCRM non respecté : {exc}")
+        return 1
+
+    usable = [r for r in records if clean_email(r.get("email_primary.email"))]
+    log(f"{len(records)} contact(s) dans l'export, {len(usable)} avec une adresse.")
+    if len(usable) > SEED_SOFT_CAP and not args.force:
+        log(f"ABANDON — {len(usable)} fiches dépassent le plafond de "
+            f"{SEED_SOFT_CAP}. Un amorçage doit rester étroit : au-delà, les "
+            f"sélecteurs de personnes des formulaires deviennent inutilisables. "
+            f"Choisissez un groupe plus restreint, ou --force si c'est voulu.")
+        return 1
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    today = now[:10]
+    person_index = load_person_index(db)
+    media_index = load_media_index(db)
+    known = existing_emails(db)
+
+    created = attached = skipped = 0
+    for record in usable:
+        row = contact_to_person(record, today)
+        if row is None:
+            skipped += 1
+            continue
+        if row["email"] in known:
+            skipped += 1
+            continue
+        if args.commit:
+            _pid, action = create_or_attach(db, row, now, person_index, media_index)
+        else:
+            action = ("attached"
+                      if (norm_name(row["name"]), row["contact_type"]) in person_index
+                      else "created")
+        known.add(row["email"])
+        if action == "created":
+            created += 1
+        else:
+            attached += 1
+        if args.verbose:
+            media = f" — {row['media_name']}" if row["media_name"] else ""
+            log(f"  {'+' if action == 'created' else '~'} {row['name']}{media}")
+
+    if args.commit:
+        db.commit()
+    prefix = "" if args.commit else "[dry-run] "
+    log(f"{prefix}Amorçage. Fiches créées : {created} | fiches complétées : "
+        f"{attached} | déjà connues ou sans nom : {skipped}.")
+    if args.commit and (created or attached):
+        log("Étape suivante — récupérer les domaines et les coller dans la règle "
+            "Google Workspace :")
+        log("  python3 utils/maildomains.py --google-rule")
+    return 0
+
+
 def cmd_prune(db, args):
     """Drop queued addresses the filters now reject.
 
@@ -449,6 +527,13 @@ def main():
                        help="put addresses CiviCRM didn't know back in the queue")
     group.add_argument("--prune", action="store_true",
                        help="drop queued addresses the current filters reject")
+    group.add_argument("--seed", metavar="FILE",
+                       help="create fiches for a whole CiviCRM group, to get the "
+                            "cycle started (keep it narrow — see SEED_SOFT_CAP)")
+    parser.add_argument("--force", action="store_true",
+                        help="--seed: accept an export past the soft cap")
+    parser.add_argument("--verbose", action="store_true",
+                        help="--seed: name every fiche")
     parser.add_argument("--db", default=DEFAULT_DB, help="path to meetings.db")
     parser.add_argument("--commit", action="store_true",
                         help="write; without it nothing is saved")
@@ -468,6 +553,8 @@ def main():
             return cmd_retry_absent(db, args)
         if args.prune:
             return cmd_prune(db, args)
+        if args.seed:
+            return cmd_seed(db, args)
         return cmd_apply(db, args)
     finally:
         db.close()

@@ -509,3 +509,4 @@ a écrit, en lecture seule, orchestrés par `deploy/civicrm-sync.sh` sur l'hôte
 | `deploy/civicrm-sync.sh` | Orchestration hôte : `cv` → `docker cp` → scripts. À planifier vers 06:30, après l'import des mails de membres. |
 
 | `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. `--list`, `--google-rule` (à coller dans la règle Workspace). |
+| `deploy/civicrm-seed.sh` | Amorçage unique : crée les fiches d'un groupe presse restreint, puis affiche les domaines à coller dans la règle Google Workspace. |

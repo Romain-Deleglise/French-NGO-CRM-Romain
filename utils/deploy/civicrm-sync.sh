@@ -37,7 +37,16 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 COMMIT=""
-[ "${1:-}" = "--commit" ] && COMMIT="--commit"
+MEDIAS_ONLY=""
+for arg in "$@"; do
+  case "$arg" in
+    --commit)      COMMIT="--commit" ;;
+    # Used by civicrm-seed.sh: a seeded journalist needs their média to exist
+    # first, and there is no point sweeping the queue during a seed.
+    --medias-only) MEDIAS_ONLY="1" ;;
+    *) echo "argument inconnu : $arg" >&2; exit 2 ;;
+  esac
+done
 
 say() { printf '\n== %s\n' "$*"; }
 
@@ -64,6 +73,11 @@ docker exec "$CRM_CONTAINER" python3 /app/utils/import_civicrm_medias.py \
   --file /tmp/civi-medias.json $COMMIT
 
 # --------------------------------------------------------------------------- #
+if [ -n "$MEDIAS_ONLY" ]; then
+  say "Médias seulement — terminé."
+  exit 0
+fi
+
 say "2/5  Addresses awaiting a lookup"
 docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py --list-pending \
   > "$WORK/pending.txt"
