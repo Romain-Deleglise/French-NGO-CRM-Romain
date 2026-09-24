@@ -333,7 +333,12 @@ première moitié reste importée — ce qui est voulu : `last_uid` avance avec
 chaque validation, donc une relance reprend où on s'était arrêté au lieu de tout
 refaire, et `imported_mails` empêche tout doublon.
 
-Si la contention persiste, l'étape suivante serait de passer la base en
-**journal WAL** (`PRAGMA journal_mode=WAL`), où lecteurs et écrivain ne se
-bloquent plus. C'est un changement persistant sur le fichier de production, donc
-à décider séparément — les deux correctifs ci-dessus devraient suffire.
+Ces deux correctifs n'ont **pas suffi** : l'import échouait encore, au bout de
+30 s d'attente, au moment de valider. La base est donc passée en **journal WAL**
+(`PRAGMA journal_mode=WAL`), où lecteurs et écrivain ne se bloquent plus.
+
+**Et ça change la façon de sauvegarder.** En WAL, les écritures récentes vivent
+dans `meetings.db-wal` jusqu'au prochain checkpoint : `cp meetings.db` perd
+donc les dernières, en produisant un fichier d'apparence valide. Utiliser
+`utils/backup_db.py` (`VACUUM INTO`), qui écrit un fichier unique et cohérent
+sans arrêter l'application.

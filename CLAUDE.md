@@ -192,12 +192,20 @@ Le peuplement/intégration ci-dessus est **partiel**. Chantiers ouverts :
 ## 6. Déploiement (Docker)
 
 La base **vit dans le conteneur** (`/app/meetings.db`) — ne pas la manipuler
-depuis l'hôte. Le `Dockerfile` ne copie que `app.py` + `templates/` + `static/` ;
+depuis l'hôte.
+
+**Elle est en journal WAL** depuis septembre 2026, pour que l'app et les
+importeurs de mails cessent de se bloquer mutuellement. Conséquence à ne pas
+rater : `cp meetings.db` **ne suffit plus** comme sauvegarde. Les écritures
+récentes vivent dans `meetings.db-wal` jusqu'au prochain checkpoint, et une
+copie du seul fichier principal les perd — en ayant l'air parfaitement valide.
+Utiliser `utils/backup_db.py`, qui fait un `VACUUM INTO` : un fichier unique et
+cohérent, pris à chaud, sans arrêter l'application. Le `Dockerfile` ne copie que `app.py` + `templates/` + `static/` ;
 `utils/` et `actual_dataset/` sont injectés à l'exécution par `docker cp`.
 
 ```bash
 cd /opt/volunteer-apps/apps/website-meeting
-sudo docker exec website-meeting-app sh -c 'cp /app/meetings.db /app/meetings.db.bak-$(date +%F)'
+sudo docker exec website-meeting-app python3 /app/utils/backup_db.py   # PAS un cp, voir ci-dessous
 git fetch <remote> && git checkout -f <remote>/main    # la prod suit main
 sudo docker-compose build && sudo docker-compose up -d  # init_db applique les migrations
 sudo docker logs --tail 15 website-meeting-app          # vérifier: pas de traceback

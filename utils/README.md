@@ -503,6 +503,7 @@ a écrit, en lecture seule, orchestrés depuis l'hôte.
 
 | Script | Rôle |
 |---|---|
+| `backup_db.py` | Sauvegarde cohérente par `VACUUM INTO`. **La base étant en WAL, un `cp` ne suffit plus.** |
 | `civicrm.py` | Correspondance CiviCRM → CRM et **test de contrat**. Le seul fichier qu'une mise à jour de CiviCRM peut casser. |
 | `civicrm_lookup.py` | File d'attente `civicrm_pending` et création des fiches : `--list-pending`, `--apply`, `--seed`, `--patterns`, `--apply-names`, `--prune`, `--retry-absent`, `--stats`. |
 | `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs de personnes). |
