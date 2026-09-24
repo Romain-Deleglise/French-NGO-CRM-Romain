@@ -499,15 +499,17 @@ sudo journalctl -u import-campaign-mails.service -n 50   # see its output
 CiviCRM porte ~12 900 journalistes avec leur adresse et leur média. On ne les
 recopie pas : une fiche est créée le jour où un membre échange avec la personne.
 Les scripts ci-dessous ne parlent jamais à CiviCRM — ils lisent le JSON que `cv`
-a écrit, en lecture seule, orchestrés par `deploy/civicrm-sync.sh` sur l'hôte.
+a écrit, en lecture seule, orchestrés depuis l'hôte.
 
 | Script | Rôle |
 |---|---|
 | `civicrm.py` | Correspondance CiviCRM → CRM et **test de contrat**. Le seul fichier qu'une mise à jour de CiviCRM peut casser. |
-| `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs). |
-| `civicrm_lookup.py` | File d'attente `civicrm_pending` : `--list-pending`, `--apply`, `--stats`, `--retry-absent`. |
-| `deploy/civicrm-sync.sh` | Orchestration hôte : `cv` → `docker cp` → scripts. À planifier vers 06:30, après l'import des mails de membres. |
-
+| `civicrm_lookup.py` | File d'attente `civicrm_pending` et création des fiches : `--list-pending`, `--apply`, `--seed`, `--patterns`, `--apply-names`, `--prune`, `--retry-absent`, `--stats`. |
+| `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs de personnes). |
 | `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. `--list`, `--google-rule` (à coller dans la règle Workspace). |
-| `deploy/civicrm-seed.sh` | Amorçage unique : crée les fiches d'un groupe presse restreint, puis affiche les domaines à coller dans la règle Google Workspace. |
 | `mailpatterns.py` | La convention d'adresses de chaque média, apprise sur les adresses connues. Sert à **reconnaître** une adresse, jamais à en construire une pour y écrire. |
+| `deploy/civicrm-seed.sh` | Amorçage, une fois : crée les fiches d'un groupe presse restreint, puis affiche les domaines à coller dans la règle Google Workspace. |
+| `deploy/civicrm-sync.sh` | Le cycle quotidien : `cv` → `docker cp` → scripts. Planifié à 06:30 par `civicrm-sync.timer`, après l'import des mails de membres de 06:10. |
+
+Ordre de mise en route : `civicrm-seed.sh --commit`, coller les domaines dans la
+règle Google Workspace, puis activer `civicrm-sync.timer`.
