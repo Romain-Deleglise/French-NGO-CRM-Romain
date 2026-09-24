@@ -213,3 +213,53 @@ sont conservés (utiles au suivi). Les mails citoyens restent, eux, minimisés
 
 *Code : branche `claude/automate-member-mails-crm`, dossier `utils/`.
 Référence complète des options : `utils/README.md`.*
+
+
+---
+
+## Les domaines connus sont lus dans la base (septembre 2026)
+
+Le script portait trois domaines en dur :
+
+```python
+OFFICIAL_DOMAINS = ("senat.fr", "assemblee-nationale.fr", "europarl.europa.eu")
+```
+
+Depuis la fusion du CRM presse, les journalistes sont des `persons` comme les
+autres, mais répartis sur des centaines de domaines de médias que personne ne
+maintiendra à la main. La liste est donc **calculée à partir des adresses déjà
+présentes en base** (`utils/maildomains.py`) et s'élargit toute seule à mesure
+que les fiches arrivent.
+
+**La règle : un domaine partagé par au moins deux personnes connues appartient à
+une organisation.** Une seule adresse sur un domaine ne prouve rien.
+
+**L'exception qui compte : les domaines grand public ne sont jamais des
+organisations.** `gmail.com`, `orange.fr`, `free.fr`, `laposte.net`… Plusieurs
+journalistes utilisent une adresse perso, ce qui ne dit rien sur le propriétaire
+d'une *nouvelle* adresse gmail. Sur ces domaines, seule l'adresse complète
+identifie quelqu'un. La liste est dans `FREEMAIL_DOMAINS`.
+
+Les trois domaines parlementaires restent un **plancher** : ils sont connus même
+face à une base vide, donc une installation neuve se comporte exactement comme
+avant.
+
+### Ce que ça débloque
+
+Le rapprochement par **scan du corps** fonctionne maintenant pour la presse. Une
+réponse envoyée depuis une autre adresse de la rédaction (`desk@lefigaro.fr`),
+qui cite le message d'origine, est rattachée au bon journaliste — ce qui était
+impossible tant que seuls les trois domaines parlementaires comptaient.
+
+### La règle Google Workspace
+
+C'est la même liste qui doit alimenter la boîte d'audit. Pour l'obtenir :
+
+```bash
+docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule
+```
+
+À coller dans la règle « Conformité du contenu ». **À relancer après chaque vague
+d'import CiviCRM** : de nouveaux médias apparaissent, et un domaine absent de la
+règle Google ne produit aucun mail dans la boîte d'audit — donc aucun
+rapprochement possible, quelle que soit la qualité du code ici.

@@ -507,3 +507,5 @@ a écrit, en lecture seule, orchestrés par `deploy/civicrm-sync.sh` sur l'hôte
 | `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs). |
 | `civicrm_lookup.py` | File d'attente `civicrm_pending` : `--list-pending`, `--apply`, `--stats`, `--retry-absent`. |
 | `deploy/civicrm-sync.sh` | Orchestration hôte : `cv` → `docker cp` → scripts. À planifier vers 06:30, après l'import des mails de membres. |
+
+| `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. `--list`, `--google-rule` (à coller dans la règle Workspace). |

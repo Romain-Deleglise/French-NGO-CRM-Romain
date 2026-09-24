@@ -49,10 +49,12 @@ from email.utils import getaddresses
 
 # Reuse the building blocks already validated in the campaign importer.
 from import_campaign_mails import (  # noqa: E402
-    OFFICIAL_DOMAINS, _OFFICIAL_RE, body_text, decoded, ensure_state_table,
-    get_last_uid, set_last_uid, load_email_index, already_imported, fetch_uids,
-    mail_date_iso, log,
+    body_text, decoded, ensure_state_table, get_last_uid, set_last_uid,
+    load_email_index, already_imported, fetch_uids, mail_date_iso, log,
 )
+# The set of domains belonging to organisations we follow — read from the data
+# rather than hard-coded, so journalists' médias count too. See maildomains.py.
+import maildomains  # noqa: E402
 # CiviCRM holds ~12 900 journalists this CRM does not. An address we cannot match
 # is queued here rather than dropped, and civicrm_lookup.py turns it into a fiche.
 from civicrm_lookup import enqueue, ensure_civicrm_tables  # noqa: E402
@@ -73,7 +75,13 @@ IMPORT_SOURCE = "Import automatique (mails membres)"
 
 
 def is_official(addr):
-    return addr.lower().endswith(tuple("@" + d for d in OFFICIAL_DOMAINS))
+    """On a domain of an organisation we follow (a chamber, a média, …).
+
+    Names kept as-is: this started life meaning "a parliamentary address" and is
+    read that way all through classify(). It now covers média domains too, which
+    is exactly what lets the same pipeline follow press correspondence.
+    """
+    return maildomains.is_known(addr)
 
 
 def is_member(addr):
@@ -372,7 +380,7 @@ def classify(msg, db, email_index, name_patterns=None):
     # 2) Body scan: a reply usually quotes the original, which carries the élu·e's
     #    official address even when the reply's From is something else.
     if to_member and not from_member:
-        body_official = {a.lower() for a in _OFFICIAL_RE.findall(body_text(msg))}
+        body_official = maildomains.find_addresses(body_text(msg))
         matches = resolve(body_official)
         if matches:
             return "received", matches, (to_member[0][1], to_member[0][0]), None, False
@@ -566,6 +574,8 @@ def main():
     # Aliases read is tolerant of the table not existing yet (e.g. dry-run first run).
     email_index = load_email_index_with_aliases(db)
     name_patterns = build_name_pattern_index(db)
+    domains = maildomains.refresh(db)
+    log(f"Known domains: {len(domains)} (from the fiches themselves).")
     log(f"Loaded {len(email_index)} élu·e e-mail(s) from {db_path}. "
         f"Output: {'auto-publish' if auto_publish else 'moderation queue'}.")
 
