@@ -57,7 +57,7 @@ from import_campaign_mails import (  # noqa: E402
 import maildomains  # noqa: E402
 # CiviCRM holds ~12 900 journalists this CRM does not. An address we cannot match
 # is queued here rather than dropped, and civicrm_lookup.py turns it into a fiche.
-from civicrm_lookup import enqueue, ensure_civicrm_tables  # noqa: E402
+from civicrm_lookup import enqueue, ensure_civicrm_tables, is_bulk  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.environ.get("IMAP_DB_PATH", os.path.join(ROOT, "meetings.db"))
@@ -429,6 +429,12 @@ def queue_unknown_counterparts(db, msg, now):
     for. Anything else (newsletters, member-to-member, robots) is left alone.
     Returns the number of addresses newly queued.
     """
+    # A newsletter, a Notion notification, an Airbnb receipt: sent by a machine
+    # to a list, so there is no person behind the address to look up. Cheapest
+    # and broadest test, hence first.
+    if is_bulk(msg):
+        return 0
+
     from_pairs = addr_pairs(msg, "From")
     to_pairs = addr_pairs(msg, "To", "Cc")
     from_member = [p for p in from_pairs if is_member(p[1])]

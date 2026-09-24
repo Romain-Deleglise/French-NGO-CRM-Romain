@@ -45,14 +45,46 @@ from import_civicrm_medias import link_person_media, load_media_index  # noqa: E
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.environ.get("IMAP_DB_PATH", os.path.join(ROOT, "meetings.db"))
 
-# Addresses never worth asking CiviCRM about: shared desks and no-reply robots.
-# They belong to a newsroom, not a person, so a fiche would be meaningless.
+# Addresses never worth asking CiviCRM about: shared desks and robots. They
+# belong to a newsroom or a machine, not a person, so a fiche would be
+# meaningless. Everything below was drawn from what the audit mailbox actually
+# produced on the first real run (notify@mail.notion.so, automated@airbnb.com,
+# bonjour@fresquedesrisquesdelia.org …).
 GENERIC_LOCALPARTS = {
+    # newsroom desks
     "contact", "redaction", "info", "infos", "presse", "press", "contactez-nous",
-    "noreply", "no-reply", "ne-pas-repondre", "nepasrepondre", "mailer-daemon",
-    "postmaster", "abonnement", "abonnements", "service-client", "newsletter",
-    "courrier", "lecteurs", "moderation", "webmaster", "admin", "support",
+    "abonnement", "abonnements", "service-client", "newsletter", "courrier",
+    "lecteurs", "moderation", "webmaster", "admin", "support", "bonjour",
+    "hello", "team", "equipe", "communication", "secretariat", "accueil",
+    # robots and transactional senders
+    "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
+    "ne-pas-repondre", "nepasrepondre", "mailer-daemon", "postmaster", "mailer",
+    "notify", "notifications", "notification", "automated", "automatic", "auto",
+    "alerts", "alert", "news", "updates", "update", "bounce", "bounces",
+    "reply", "noreponse", "systeme", "system", "root", "daemon", "billing",
+    "facture", "facturation", "invoice", "receipt", "confirmation",
 }
+
+# Our own properties. A mail to or from one of these is internal — the Fresque
+# site, the association's own domains — never a contact to file. pauseia.fr is
+# already excluded as the members' domain; this covers the rest. Comma-separated
+# in CRM_OWN_DOMAINS to add one without touching the code.
+OWN_DOMAINS = frozenset(
+    d.strip().lower()
+    for d in os.environ.get(
+        "CRM_OWN_DOMAINS",
+        "pauseia.fr,fresquedesrisquesdelia.org,pauseai.info").split(",")
+    if d.strip()
+)
+
+# Headers that mean "a machine sent this to a list", in order of how standard
+# they are. A newsletter, a Notion notification or an Airbnb receipt carries at
+# least one; a person writing to a member carries none. This is the filter that
+# actually holds — a word list will always lag behind the next SaaS robot.
+BULK_HEADERS = (
+    "List-Unsubscribe", "List-Id", "List-Post", "Feedback-ID",
+    "X-Auto-Response-Suppress", "X-Mailer-Daemon", "X-Campaign-Id",
+)
 
 
 def log(msg):
@@ -93,10 +125,39 @@ def ensure_civicrm_tables(db):
 
 
 def is_generic(address):
-    """True for a newsroom desk or a robot — worth skipping, not worth a fiche."""
-    local = (address or "").split("@", 1)[0].lower()
+    """True for a newsroom desk, a robot, or one of our own domains.
+
+    Three reasons an address is not worth a fiche, and none of them is about
+    CiviCRM: nobody is behind it, it is a machine, or it is us.
+    """
+    address = (address or "").strip().lower()
+    if "@" not in address:
+        return True
+    local, _, domain = address.partition("@")
     local = local.split("+", 1)[0]
+    if domain in OWN_DOMAINS:
+        return True
+    # mail.notion.so, email.airbnb.com, e.sendgrid.net…: robots live on a
+    # subdomain of the service as often as on its apex.
+    if any(domain == d or domain.endswith("." + d) for d in OWN_DOMAINS):
+        return True
     return local in GENERIC_LOCALPARTS
+
+
+def is_bulk(msg):
+    """True when the message was sent by a machine to a list, not by a person.
+
+    Checked before anything else: it catches the next SaaS notifier without
+    anyone adding a word to GENERIC_LOCALPARTS.
+    """
+    for header in BULK_HEADERS:
+        if msg.get(header):
+            return True
+    precedence = (msg.get("Precedence") or "").strip().lower()
+    if precedence in ("bulk", "list", "junk"):
+        return True
+    auto = (msg.get("Auto-Submitted") or "").strip().lower()
+    return bool(auto) and auto != "no"
 
 
 def enqueue(db, address, display, now):
@@ -254,6 +315,27 @@ def cmd_retry_absent(db, args):
     return 0
 
 
+def cmd_prune(db, args):
+    """Drop queued addresses the filters now reject.
+
+    The filters get tightened as the audit mailbox shows what it really carries
+    — the first real run queued four robots and no journalist — so addresses
+    already in the queue have to be re-judged against the current rules.
+    """
+    doomed = [r[0] for r in db.execute(
+        "SELECT email FROM civicrm_pending WHERE status = 'pending'")
+        if is_generic(r[0])]
+    for address in doomed:
+        log(f"  - {address}")
+        if args.commit:
+            db.execute("DELETE FROM civicrm_pending WHERE email = ?", (address,))
+    if args.commit:
+        db.commit()
+    prefix = "" if args.commit else "[dry-run] "
+    log(f"{prefix}{len(doomed)} adresse(s) retirée(s) de la file.")
+    return 0
+
+
 def cmd_apply(db, args):
     with open(args.apply, encoding="utf-8") as fh:
         records = json.load(fh)
@@ -365,6 +447,8 @@ def main():
     group.add_argument("--stats", action="store_true", help="queue counts by status")
     group.add_argument("--retry-absent", action="store_true",
                        help="put addresses CiviCRM didn't know back in the queue")
+    group.add_argument("--prune", action="store_true",
+                       help="drop queued addresses the current filters reject")
     parser.add_argument("--db", default=DEFAULT_DB, help="path to meetings.db")
     parser.add_argument("--commit", action="store_true",
                         help="write; without it nothing is saved")
@@ -382,6 +466,8 @@ def main():
             return cmd_stats(db, args)
         if args.retry_absent:
             return cmd_retry_absent(db, args)
+        if args.prune:
+            return cmd_prune(db, args)
         return cmd_apply(db, args)
     finally:
         db.close()

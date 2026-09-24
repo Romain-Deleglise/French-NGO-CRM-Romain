@@ -3,6 +3,7 @@
 The mapping is the part a CiviCRM upgrade can silently break, so the contract
 test here is the same guard the scripts rely on at runtime.
 """
+import email
 import os
 import sqlite3
 import sys
@@ -104,9 +105,51 @@ class GenericAddressTests(unittest.TestCase):
                      "no-reply@lemonde.fr", "presse@ngo.org"):
             self.assertTrue(cl.is_generic(addr), addr)
 
+    def test_the_robots_the_first_real_run_actually_queued(self):
+        # Every address the audit mailbox produced on 24/09: four robots, zero
+        # journalists. They are the reason this filter exists.
+        for addr in ("automated@airbnb.com", "notify@mail.notion.com",
+                     "notify@mail.notion.so",
+                     "bonjour@fresquedesrisquesdelia.org"):
+            self.assertTrue(cl.is_generic(addr), addr)
+
+    def test_our_own_domains_are_not_contacts(self):
+        # The Fresque site is ours; a mail from it is internal, not a lead.
+        self.assertTrue(cl.is_generic("quelquun@fresquedesrisquesdelia.org"))
+        self.assertTrue(cl.is_generic("x@mail.fresquedesrisquesdelia.org"))
+
     def test_a_person_is(self):
-        for addr in ("tvey@lefigaro.fr", "sylvain.rolland@latribune.fr"):
+        for addr in ("tvey@lefigaro.fr", "sylvain.rolland@latribune.fr",
+                     "e.bastie@lefigaro.fr"):
             self.assertFalse(cl.is_generic(addr), addr)
+
+    def test_a_malformed_address_is_skipped_rather_than_queued(self):
+        for addr in ("", None, "pas-une-adresse"):
+            self.assertTrue(cl.is_generic(addr))
+
+
+class BulkMailTests(unittest.TestCase):
+    """The structural filter: a machine writing to a list, whatever its address."""
+
+    def _msg(self, headers):
+        raw = "From: Someone <s@example.org>\r\nTo: m@pauseia.fr\r\n"
+        raw += "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        return email.message_from_string(raw + "\r\nbody\r\n")
+
+    def test_list_unsubscribe_marks_a_newsletter(self):
+        self.assertTrue(cl.is_bulk(self._msg(
+            {"List-Unsubscribe": "<https://x.test/u>"})))
+
+    def test_precedence_bulk_and_auto_submitted(self):
+        self.assertTrue(cl.is_bulk(self._msg({"Precedence": "bulk"})))
+        self.assertTrue(cl.is_bulk(self._msg(
+            {"Auto-Submitted": "auto-generated"})))
+
+    def test_auto_submitted_no_is_a_real_person(self):
+        self.assertFalse(cl.is_bulk(self._msg({"Auto-Submitted": "no"})))
+
+    def test_a_plain_message_is_not_bulk(self):
+        self.assertFalse(cl.is_bulk(self._msg({"Subject": "Votre tribune"})))
 
 
 class QueueAndApplyTests(unittest.TestCase):

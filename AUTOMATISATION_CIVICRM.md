@@ -174,10 +174,38 @@ python3 utils/civicrm_lookup.py --stats
 python3 utils/civicrm_lookup.py --retry-absent --commit   # après avoir enrichi CiviCRM
 ```
 
-Les **adresses génériques** (`redaction@`, `contact@`, `presse@`, `noreply@`…)
-n'entrent jamais dans la file : elles appartiennent à une rédaction, pas à une
-personne, et une fiche n'aurait aucun sens. La liste est dans
-`GENERIC_LOCALPARTS` (`utils/civicrm_lookup.py`).
+### Ce qui n'entre jamais dans la file
+
+Le premier passage réel sur la boîte d'audit a produit **quatre adresses, toutes
+des robots, aucun journaliste** :
+
+```
+automated@airbnb.com
+notify@mail.notion.com
+notify@mail.notion.so
+bonjour@fresquedesrisquesdelia.org
+```
+
+D'où trois filtres, du plus solide au plus littéral :
+
+1. **Les en-têtes d'envoi en masse** (`is_bulk`). Une newsletter, une
+   notification Notion ou un reçu Airbnb portent `List-Unsubscribe`, `List-Id`,
+   `Precedence: bulk` ou `Auto-Submitted` ; un message écrit par une personne
+   n'en porte aucun. C'est le filtre qui tient dans le temps — une liste de mots
+   aura toujours un train de retard sur le prochain robot SaaS.
+2. **Nos propres domaines** (`OWN_DOMAINS`, surchargeable par `CRM_OWN_DOMAINS`) :
+   `pauseia.fr`, `fresquedesrisquesdelia.org`, `pauseai.info`, sous-domaines
+   compris. Un mail venant de la Fresque est interne, pas un contact à ficher.
+3. **Les boîtes partagées et les robots par nom** (`GENERIC_LOCALPARTS`) :
+   `redaction@`, `contact@`, `presse@`, `notify@`, `automated@`, `bonjour@`…
+
+Quand les filtres se resserrent, la file garde les adresses jugées selon les
+anciennes règles. `--prune` les repasse au crible :
+
+```bash
+python3 utils/civicrm_lookup.py --prune             # montre
+python3 utils/civicrm_lookup.py --prune --commit    # retire
+```
 
 ---
 
