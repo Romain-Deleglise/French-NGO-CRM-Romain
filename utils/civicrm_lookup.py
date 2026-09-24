@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from civicrm import (  # noqa: E402
-    CONTACT_FIELDS, ContractError, assert_contract, clean_email,
+    CONTACT_FIELDS, CONTACT_FIELDS_OPTIONAL, ContractError, assert_contract, clean_email,
     contact_to_person, norm_name,
 )
 from import_civicrm_medias import link_person_media, load_media_index  # noqa: E402
@@ -338,7 +338,8 @@ def cmd_seed(db, args):
     with open(args.seed, encoding="utf-8") as fh:
         records = json.load(fh)
     try:
-        assert_contract(records, CONTACT_FIELDS, "contact")
+        assert_contract(records, CONTACT_FIELDS, "contact",
+                        optional=CONTACT_FIELDS_OPTIONAL, warn=log)
     except ContractError as exc:
         log(f"ABANDON — contrat CiviCRM non respecté : {exc}")
         return 1
@@ -553,7 +554,8 @@ def cmd_apply(db, args):
     with open(args.apply, encoding="utf-8") as fh:
         records = json.load(fh)
     try:
-        assert_contract(records, CONTACT_FIELDS, "contact")
+        assert_contract(records, CONTACT_FIELDS, "contact",
+                        optional=CONTACT_FIELDS_OPTIONAL, warn=log)
     except ContractError as exc:
         log(f"ABANDON — contrat CiviCRM non respecté : {exc}")
         return 1

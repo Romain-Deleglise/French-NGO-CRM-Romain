@@ -34,7 +34,9 @@ import unicodedata
 # `select` clauses the sync script must ask for, and that we must find back in
 # every record. Keys are CiviCRM APIv4 field names, including its implicit joins
 # ("email_primary.email") and custom-group syntax ("<group>.<field>").
-CONTACT_FIELDS = (
+# Without these a fiche would be wrong rather than merely incomplete: no name,
+# no média, no stance. Their absence stops the sync.
+CONTACT_FIELDS_REQUIRED = (
     "id",
     "display_name",
     "contact_sub_type",
@@ -43,9 +45,23 @@ CONTACT_FIELDS = (
     "Analyse_strat_gique_Pause_IA.Alignement",
     "Analyse_strat_gique_Pause_IA.Niveau_d_influence",
     "Description_courte.Description_courte",
+)
+
+# Nice to have, and absent for a whole export when CiviCRM stores that custom
+# group as a multi-record ("repeating") one — APIv4 does not expose those through
+# the dotted syntax at all, it makes them a separate entity. Losing a Twitter
+# handle must not stop 593 fiches from being created.
+CONTACT_FIELDS_OPTIONAL = (
     "Compte_R_seaux_Sociaux.Twitter",
     "Compte_R_seaux_Sociaux.LinkedIn",
 )
+
+CONTACT_FIELDS = CONTACT_FIELDS_REQUIRED + CONTACT_FIELDS_OPTIONAL
+
+# How many records to look at before deciding a field is missing. APIv4 normally
+# returns the same keys for every row, but deciding from row 0 alone — as this
+# did at first — turns one unusual record into a failed run.
+CONTRACT_SAMPLE = 50
 
 ORGANISATION_FIELDS = (
     "id",
@@ -58,25 +74,50 @@ class ContractError(RuntimeError):
     """CiviCRM returned something we don't recognise — stop, never guess."""
 
 
-def assert_contract(records, fields, what="contact"):
-    """Fail loudly if the export doesn't carry the fields we map.
+def assert_contract(records, fields, what="contact", optional=(), warn=print):
+    """Fail loudly if the export lost a field we cannot do without.
 
-    Called before a single row is written. After a CiviCRM upgrade that renames
-    or drops a custom field, this raises and the sync does nothing, rather than
-    silently importing fiches with an empty média or a wrong stance.
+    Called before a single row is written, so that a CiviCRM upgrade renaming a
+    custom field stops the sync instead of quietly importing fiches with an
+    empty média or a wrong stance.
+
+    Two refinements this earned the hard way, on a 593-contact export:
+
+    - It reads the keys of a *sample* of records, not of the first one. A single
+      unusual row must not fail a whole run.
+    - Fields listed in `optional` only produce a warning. A custom group stored
+      as multi-record is simply not reachable through APIv4's dotted syntax, and
+      a missing Twitter handle is no reason to refuse 593 journalists.
+
+    Returns the optional fields that were absent, so the caller can say so.
     """
     if not isinstance(records, list):
         raise ContractError(f"expected a list of {what}s, got {type(records).__name__}")
     if not records:
-        return  # An empty export is legitimate: nothing new to resolve.
-    missing = [f for f in fields if f not in records[0]]
-    if missing:
+        return ()  # An empty export is legitimate: nothing new to resolve.
+
+    seen = set()
+    for record in records[:CONTRACT_SAMPLE]:
+        if isinstance(record, dict):
+            seen.update(record)
+
+    required = [f for f in fields if f not in seen and f not in optional]
+    if required:
         raise ContractError(
-            f"{what} export is missing {len(missing)} expected field(s): "
-            + ", ".join(missing)
+            f"{what} export is missing {len(required)} required field(s): "
+            + ", ".join(required)
             + ". CiviCRM was probably upgraded or a custom field renamed — check "
               "utils/deploy/civicrm-sync.sh against utils/civicrm.py before rerunning."
         )
+
+    absent = tuple(f for f in optional if f not in seen)
+    if absent and warn:
+        warn(f"Champ(s) facultatif(s) absent(s) de l'export, ignoré(s) : "
+             + ", ".join(absent)
+             + ". Si c'est durable, retirez-les du `select` de civicrm-sync.sh — "
+               "un groupe de champs personnalisés « multi-valeurs » n'est pas "
+               "lisible par la syntaxe pointée d'APIv4.")
+    return absent
 
 
 # --------------------------------------------------------------------------- #

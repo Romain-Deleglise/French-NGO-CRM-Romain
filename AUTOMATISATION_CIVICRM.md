@@ -329,6 +329,35 @@ Avec lecture seule + arrêt sur contrat non satisfait, le pire qu'une mise à jo
 puisse produire est **une synchronisation qui ne tourne plus**. Jamais de données
 abîmées.
 
+### Champs requis et champs facultatifs
+
+Tous les champs ne valent pas un arrêt. `CONTACT_FIELDS_REQUIRED` — nom, média,
+alignement, description — manquants, une fiche serait *fausse* et non seulement
+incomplète : la synchro s'arrête. `CONTACT_FIELDS_OPTIONAL` (Twitter, LinkedIn)
+ne produit qu'un avertissement.
+
+La distinction vient d'un cas réel : sur l'export de 593 contacts du groupe 12,
+`Compte_R_seaux_Sociaux.Twitter` et `.LinkedIn` étaient **absents de toutes les
+lignes**. CiviCRM stocke ce groupe de champs personnalisés en **multi-valeurs**
+(« repeating »), et la syntaxe pointée d'APIv4 ne les expose pas du tout — ils
+forment une entité séparée. Perdre un compte Twitter n'est pas une raison de
+refuser 593 journalistes.
+
+Pour vérifier de quel type est un groupe :
+
+```bash
+docker exec civicrm-web cv api4 CustomGroup.get '{"select":["name","title","is_multiple","extends"],"limit":50}' --cwd=/var/www/html
+```
+
+`is_multiple: true` confirme qu'il faut passer par l'entité dédiée
+(`Custom_<nom_du_groupe>.get`, filtrée sur `entity_id`) plutôt que par le
+`select` de `Contact.get`. Non implémenté à ce jour : les réseaux sociaux sont
+simplement ignorés.
+
+Le contrat lit par ailleurs les clés d'un **échantillon** d'enregistrements
+(`CONTRACT_SAMPLE`), pas seulement du premier — une ligne inhabituelle ne doit
+pas faire échouer tout un export.
+
 ---
 
 ## Points ouverts

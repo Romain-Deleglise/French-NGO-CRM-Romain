@@ -43,6 +43,36 @@ class ContractTests(unittest.TestCase):
     def test_empty_export_is_legitimate(self):
         cc.assert_contract([], cc.CONTACT_FIELDS)
 
+    def test_a_missing_optional_field_only_warns(self):
+        # Exactly what the 593-contact export did: CiviCRM stores the social
+        # group as multi-record, so APIv4's dotted syntax never returns it.
+        # Losing a Twitter handle must not refuse 593 journalists.
+        export = dict(FIGARO)
+        del export["Compte_R_seaux_Sociaux.Twitter"]
+        del export["Compte_R_seaux_Sociaux.LinkedIn"]
+        said = []
+        absent = cc.assert_contract([export], cc.CONTACT_FIELDS, "contact",
+                                    optional=cc.CONTACT_FIELDS_OPTIONAL,
+                                    warn=said.append)
+        self.assertEqual(set(absent), set(cc.CONTACT_FIELDS_OPTIONAL))
+        self.assertTrue(said and "facultatif" in said[0])
+
+    def test_a_required_field_still_stops_everything(self):
+        export = dict(FIGARO)
+        del export["employer_id.display_name"]
+        with self.assertRaises(cc.ContractError) as ctx:
+            cc.assert_contract([export], cc.CONTACT_FIELDS, "contact",
+                               optional=cc.CONTACT_FIELDS_OPTIONAL, warn=None)
+        self.assertIn("employer_id", str(ctx.exception))
+
+    def test_one_odd_record_does_not_fail_the_whole_export(self):
+        # Deciding from records[0] alone — as this did at first — turned a
+        # single unusual row into a failed run of the entire export.
+        odd = {"id": 1, "display_name": "Partiel"}
+        with_odd_first = [odd] + [dict(FIGARO) for _ in range(5)]
+        cc.assert_contract(with_odd_first, cc.CONTACT_FIELDS, "contact",
+                           optional=cc.CONTACT_FIELDS_OPTIONAL, warn=None)
+
     def test_renamed_custom_field_is_caught(self):
         broken = dict(FIGARO)
         del broken["Analyse_strat_gique_Pause_IA.Alignement"]
