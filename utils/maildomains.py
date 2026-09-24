@@ -159,13 +159,23 @@ def main():
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--min-persons", type=int, default=MIN_PERSONS_PER_DOMAIN,
                         help="how many known people a domain needs to count")
+    parser.add_argument("--exclude-seed", action="store_true",
+                        help="leave out the three parliamentary domains — for a "
+                             "Workspace rule that covers the press only, the "
+                             "élu·es already having one of their own")
     args = parser.parse_args()
 
     db = sqlite3.connect(args.db)
     try:
-        domains = sorted(collect(db, args.min_persons))
+        domains = collect(db, args.min_persons)
     finally:
         db.close()
+    # Two Workspace rules rather than one is the better split: their domain sets
+    # are disjoint, so nothing is ever copied twice, and press capture can be
+    # scoped — or switched off — without touching the élu·es'.
+    if args.exclude_seed:
+        domains = domains - set(SEED_DOMAINS)
+    domains = sorted(domains)
 
     if args.list:
         for domain in domains:
@@ -174,8 +184,9 @@ def main():
     else:
         # The Workspace rule copies a message when one side matches any of these.
         print(" ".join(domains))
-        print(f"\n{len(domains)} domaine(s) — à coller dans la règle "
-              f"« Conformité du contenu » qui alimente la boîte d'audit.",
+        scope = "presse" if args.exclude_seed else "complète"
+        print(f"\n{len(domains)} domaine(s), liste {scope} — à coller dans la "
+              f"règle « Conformité du contenu » qui alimente la boîte d'audit.",
               file=sys.stderr)
     return 0
 

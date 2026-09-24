@@ -253,16 +253,28 @@ impossible tant que seuls les trois domaines parlementaires comptaient.
 
 ### La règle Google Workspace
 
-C'est la même liste qui doit alimenter la boîte d'audit. Pour l'obtenir :
+C'est la même liste qui doit alimenter la boîte d'audit :
 
 ```bash
 docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule
+docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule --exclude-seed
 ```
 
-À coller dans la règle « Conformité du contenu ». **À relancer après chaque vague
-d'import CiviCRM** : de nouveaux médias apparaissent, et un domaine absent de la
-règle Google ne produit aucun mail dans la boîte d'audit — donc aucun
-rapprochement possible, quelle que soit la qualité du code ici.
+**À relancer après chaque vague d'import CiviCRM** : de nouveaux médias
+apparaissent, et un domaine absent de la règle Google ne produit aucun mail dans
+la boîte d'audit — donc aucun rapprochement possible, quelle que soit la qualité
+du code ici.
+
+**Deux règles plutôt qu'une**, et `--exclude-seed` sert à ça : une pour les
+élu·es (les trois domaines parlementaires), une pour la presse (les autres).
+Leurs ensembles de domaines étant **disjoints**, aucun message ne coche les deux
+et rien n'est copié en double. L'intérêt est ailleurs : on peut couper ou
+restreindre la capture presse — par exemple à `presse@pauseia.fr` plutôt qu'à
+tout `@pauseia.fr` — sans toucher à celle des élu·es.
+
+**Les deux règles doivent router vers la même boîte d'audit.** L'import ne lit
+qu'une boîte (`MEMBER_IMAP_USER`) ; deux destinations demanderaient une seconde
+configuration IMAP et une passe d'import séparée.
 
 ---
 
