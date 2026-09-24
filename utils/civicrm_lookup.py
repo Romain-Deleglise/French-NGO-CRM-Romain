@@ -723,7 +723,7 @@ def cmd_apply(db, args):
     media_index = load_media_index(db)
     known = existing_emails(db)
 
-    created = attached = absent = already = 0
+    created = attached = absent = already = out_of_scope = 0
     for address in pending:
         record = by_email.get(address) or by_id.get(addr_to_contact.get(address))
         if record is None:
@@ -740,6 +740,19 @@ def cmd_apply(db, args):
             already += 1
             continue
         row = contact_to_person(record, today)
+        if row is not None and row["contact_type"] == "Autre" \
+                and not args.include_other:
+            # CiviCRM holds the association's own volunteers, members and allies
+            # alongside its journalists, and a lookup by address finds them just
+            # as readily. Their CiviCRM sub-type maps to no CONTACT_TYPE here, so
+            # they would land as "Autre" — and this CRM follows *external*
+            # relations: a fiche for a teammate is simply wrong. The first real
+            # sync was about to create 26 of them, 21 being volunteers.
+            out_of_scope += 1
+            db.execute(
+                "UPDATE civicrm_pending SET status = 'absent', resolved_at = ? "
+                "WHERE email = ?", (now, address))
+            continue
         if row is not None:
             # The address the member actually corresponded with is the one worth
             # storing — it is what future mails will carry.
@@ -774,6 +787,7 @@ def cmd_apply(db, args):
     prefix = "" if args.commit else "[dry-run] "
     log(f"{prefix}Terminé. Fiches créées : {created} | fiches complétées : "
         f"{attached} | déjà connues : {already} | inconnues de CiviCRM : {absent} "
+        f"| hors périmètre (bénévoles, sympathisant·es…) : {out_of_scope} "
         f"| en file au départ : {len(pending)}.")
     if created or attached:
         log("Relancez ensuite : import_member_mails.py --backfill "
@@ -810,6 +824,12 @@ def main():
     group.add_argument("--seed", metavar="FILE",
                        help="create fiches for a whole CiviCRM group, to get the "
                             "cycle started (keep it narrow — see SEED_SOFT_CAP)")
+    parser.add_argument("--include-other", action="store_true",
+                        help="--apply: also create fiches for CiviCRM contacts "
+                             "whose sub-type maps to no CONTACT_TYPE here "
+                             "(bénévoles, sympathisant·es…). Off by default: "
+                             "this CRM follows external relations, not the "
+                             "association's own people.")
     parser.add_argument("--all", action="store_true",
                         help="--patterns: show every learned convention, not "
                              "only those the queue needs")

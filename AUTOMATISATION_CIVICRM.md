@@ -199,6 +199,28 @@ python3 utils/civicrm_lookup.py --patterns        # les conventions apprises
 
 ---
 
+## Qui mérite une fiche, et qui n'en mérite pas
+
+CiviCRM ne contient pas que des journalistes : il porte aussi **les bénévoles,
+adhérent·es et sympathisant·es de l'association**. Une recherche par adresse les
+trouve tout aussi bien. Le premier passage réel l'a montré crûment — sur 26
+contacts identifiés, **21 étaient des membres ou des allié·es**, dont un collègue
+de l'équipe.
+
+Ce CRM suit les relations **externes**. Une fiche de contact pour son propre
+coéquipier n'a pas de sens.
+
+Règle appliquée : un contact dont le sous-type CiviCRM ne correspond à aucun
+`CONTACT_TYPE` d'ici (donc qui atterrirait en `Autre`) est **écarté** et marqué
+`absent`. `--include-other` lève la restriction si besoin.
+
+Conséquence assumée : un journaliste que CiviCRM n'aurait pas typé passe à la
+trappe. C'est le bon compromis — il finira en file, visible dans `--report`, et
+un humain pourra le typer dans CiviCRM. L'inverse (remplir le CRM de bénévoles)
+serait bien plus pénible à défaire.
+
+---
+
 ## Correspondance des données
 
 | CiviCRM | Ici | Note |

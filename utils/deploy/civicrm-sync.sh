@@ -150,7 +150,11 @@ PY
 )
 
 if [ "$MEDIAS" = "[]" ]; then
-  echo "   aucune convention connue pour l'instant (amorçage requis : civicrm-seed.sh)"
+  # Not "seed me": --patterns lists only the conventions the *queued* addresses
+  # need. An empty result usually means those addresses sit on gmail, proton and
+  # the like, where no convention exists or ever could.
+  echo "   aucune adresse en attente sur un domaine dont la convention est connue"
+  echo "   (les conventions apprises : civicrm_lookup.py --patterns --all)"
 else
   echo "   médias concernés : $MEDIAS"
   civi Contact.get \

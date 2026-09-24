@@ -113,6 +113,31 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(row["contact_type"], "Autre")
         self.assertIn("Influenceur", row["notes"])
 
+    def test_a_volunteer_maps_to_autre_and_is_therefore_out_of_scope(self):
+        # The first real sync found 26 contacts by address and 21 were the
+        # association's own volunteers and allies — Hugo De Bosschere among
+        # them, a teammate. They are legitimately in CiviCRM; they have no
+        # business being contacts in a journal of external relations. The
+        # marker --apply keys off is contact_type == "Autre".
+        for subtype in ("B_n_vole", "Sympathisant"):
+            row = cc.contact_to_person(
+                dict(FIGARO, contact_sub_type=[subtype],
+                     display_name="Jeanne Bazard",
+                     **{"email_primary.email": "jeannebaz@protonmail.com"}),
+                TODAY)
+            self.assertEqual(row["contact_type"], "Autre", subtype)
+            self.assertIn(subtype, row["notes"])
+
+    def test_a_journalist_at_a_local_radio_is_in_scope(self):
+        # From the same batch: the five that did belong there.
+        row = cc.contact_to_person(
+            dict(FIGARO, display_name="Aurélien Vurli",
+                 **{"email_primary.email": "aurelien.vurli@rcf.fr",
+                    "employer_id.display_name": "RCF HAUTS DE FRANCE"}),
+            TODAY)
+        self.assertEqual(row["contact_type"], "Journaliste")
+        self.assertEqual(row["media_name"], "RCF HAUTS DE FRANCE")
+
     def test_multivalued_subtype_prefers_the_mapped_one(self):
         rec = dict(FIGARO, contact_sub_type=["B_n_vole", "Journaliste"])
         self.assertEqual(cc.contact_to_person(rec, TODAY)["contact_type"],
