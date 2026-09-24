@@ -263,3 +263,32 @@ docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule
 d'import CiviCRM** : de nouveaux médias apparaissent, et un domaine absent de la
 règle Google ne produit aucun mail dans la boîte d'audit — donc aucun
 rapprochement possible, quelle que soit la qualité du code ici.
+
+---
+
+## `init_db()` est désormais sérialisé entre workers (septembre 2026)
+
+Le déploiement de `44b4311` a planté au démarrage en boucle : `init_db()` tourne
+à l'import du module, donc **les quatre workers gunicorn l'exécutent en même
+temps**. Le `RENAME COLUMN details` d'un worker est passé pendant qu'un autre
+lançait `UPDATE … details`, et le second a vu une colonne qui n'existait plus.
+
+Un **verrou de fichier** (`flock` sur `meetings.db.migrate.lock`) sérialise
+maintenant les migrations. Un verrou de fichier et non une transaction SQLite,
+parce que `executescript()` valide toute transaction en cours avant de
+s'exécuter : un `BEGIN IMMEDIATE` autour de ce bloc serait simplement ignoré.
+`flock` est en outre tenu par le noyau, donc un worker qui meurt en pleine
+migration le relâche au lieu de bloquer le démarrage suivant.
+
+Les workers qui attendent derrière le verrou rejouent ensuite les migrations —
+toutes sont gardées (`IF NOT EXISTS`, test de `PRAGMA table_info`), donc ce sont
+des opérations vides à ce moment-là. **Ce qui compte est de sérialiser, pas de
+sauter.** Si le verrou ne peut pas être pris (répertoire en lecture seule), le
+démarrage continue : un processus unique est le cas normal en développement.
+
+Les tests (`tests/test_init_db_concurrency.py`) démarrent de **vrais processus**
+en parallèle sur une base neuve, comme gunicorn, et vérifient qu'un second
+processus attend bien que le premier ait fini.
+
+`CRM_DB_PATH` permet au passage de pointer la base ailleurs, comme les scripts
+`utils/` le font déjà avec `IMAP_DB_PATH`.

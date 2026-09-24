@@ -20,6 +20,8 @@ Run with:  uv run flask --app app run --debug
 """
 
 import calendar as pycalendar
+import contextlib
+import fcntl
 import os
 import random
 import re
@@ -52,7 +54,10 @@ from werkzeug.utils import secure_filename
 # --------------------------------------------------------------------------- #
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "meetings.db"
+# Overridable so tests (and a throwaway instance) can point somewhere else; the
+# utils/ scripts already take IMAP_DB_PATH the same way. Unset, it is the file
+# next to app.py — which is /app/meetings.db inside the container.
+DB_PATH = Path(os.environ.get("CRM_DB_PATH") or (BASE_DIR / "meetings.db"))
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -821,9 +826,63 @@ def inject_pending_count():
     return {"pending_count": total}
 
 
+@contextlib.contextmanager
+def _migration_lock():
+    """Let one process at a time run the migrations.
+
+    `init_db()` runs on import, so under gunicorn all four workers reach it at
+    once. That is how the deploy of 44b4311 crash-looped: one worker's
+    `RENAME COLUMN details` landed while another was running `UPDATE … details`,
+    and the second saw a column that no longer existed.
+
+    A file lock rather than a SQLite transaction, because `executescript()`
+    commits any open transaction before it runs — so `BEGIN IMMEDIATE` around
+    this body would simply be dropped. `flock` also costs nothing and is held by
+    the kernel, so a worker that dies mid-migration releases it instead of
+    wedging the next boot.
+
+    The workers that queue behind the lock still run the migrations afterwards;
+    every one of them is guarded (`IF NOT EXISTS`, a `PRAGMA table_info` check),
+    so by then they are no-ops. Serialising is what matters, not skipping.
+
+    Yields True when the lock was taken. If it cannot be (a read-only directory,
+    a platform without flock), it yields False and start-up carries on: a single
+    process is the normal case in development, where there is nothing to race.
+    """
+    lock_path = f"{DB_PATH}.migrate.lock"
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        yield False
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        yield False
+    finally:
+        os.close(fd)
+
+
 def init_db():
-    """Create tables if they don't exist yet, and run lightweight migrations."""
+    """Create tables if they don't exist yet, and run lightweight migrations.
+
+    Runs at import time in every gunicorn worker, hence the lock — see
+    _migration_lock for what happens without it.
+    """
+    with _migration_lock():
+        _init_db_locked()
+
+
+def _init_db_locked():
     db = sqlite3.connect(DB_PATH)
+    # Belt and braces behind the file lock: should two processes ever reach the
+    # database at once anyway, wait for the writer rather than raising
+    # "database is locked" and taking the worker down with it.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.executescript(
         """
         -- Certified users (password holders). Just an identity — name or Discord

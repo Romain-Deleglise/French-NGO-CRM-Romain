@@ -1,0 +1,13 @@
+[Unit]
+Description=Resolve unknown press addresses against CiviCRM, daily
+
+[Timer]
+# 06:30 UTC, after import-member-mails at 06:10: that run is what fills the
+# queue this one drains, so the order matters. Give the mail import room to
+# finish rather than racing it.
+OnCalendar=*-*-* 06:30:00
+# A server that was off at 06:30 still catches up, like the other timers here.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -86,16 +86,33 @@ with open(sys.argv[1], encoding="utf-8") as fh:
     print(json.dumps([l.strip() for l in fh if l.strip()]))
 PY
 )
+# Two steps on purpose. CiviCRM holds ~1.6 addresses per journalist (21 401 for
+# 12 987 contacts), and the one a member wrote to is often NOT the primary — so
+# filtering Contact.get on `email_primary.email` silently misses them. Ask the
+# Email entity which contact each address belongs to, then fetch those contacts.
+civi Email.get \
+  "{\"select\":[\"email\",\"contact_id\"],\"where\":[[\"email\",\"IN\",$EMAILS]],\"limit\":0}" \
+  > "$WORK/civi-emails.json"
+echo "   $(grep -c '"email"' "$WORK/civi-emails.json" || true) adresse(s) reconnue(s)"
+
+IDS=$(python3 - "$WORK/civi-emails.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    rows = json.load(fh)
+print(json.dumps(sorted({r["contact_id"] for r in rows if r.get("contact_id")})))
+PY
+)
 civi Contact.get \
-  "{\"select\":[\"id\",\"display_name\",\"contact_sub_type\",\"email_primary.email\",\"employer_id.display_name\",\"Analyse_strat_gique_Pause_IA.Alignement\",\"Analyse_strat_gique_Pause_IA.Niveau_d_influence\",\"Description_courte.Description_courte\",\"Compte_R_seaux_Sociaux.Twitter\",\"Compte_R_seaux_Sociaux.LinkedIn\"],\"where\":[[\"email_primary.email\",\"IN\",$EMAILS],[\"is_deleted\",\"=\",false]],\"limit\":0}" \
+  "{\"select\":[\"id\",\"display_name\",\"contact_sub_type\",\"email_primary.email\",\"employer_id.display_name\",\"Analyse_strat_gique_Pause_IA.Alignement\",\"Analyse_strat_gique_Pause_IA.Niveau_d_influence\",\"Description_courte.Description_courte\",\"Compte_R_seaux_Sociaux.Twitter\",\"Compte_R_seaux_Sociaux.LinkedIn\"],\"where\":[[\"id\",\"IN\",$IDS],[\"is_deleted\",\"=\",false]],\"limit\":0}" \
   > "$WORK/civi-contacts.json"
 echo "   $(grep -c '"id"' "$WORK/civi-contacts.json" || true) contact(s) trouvé(s)"
 
 # --------------------------------------------------------------------------- #
 say "4/5  Creating the fiches"
 docker cp "$WORK/civi-contacts.json" "$CRM_CONTAINER:/tmp/civi-contacts.json"
+docker cp "$WORK/civi-emails.json" "$CRM_CONTAINER:/tmp/civi-emails.json"
 docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py \
-  --apply /tmp/civi-contacts.json $COMMIT
+  --apply /tmp/civi-contacts.json --emails /tmp/civi-emails.json $COMMIT
 
 # --------------------------------------------------------------------------- #
 say "5/5  Re-linking the mails that were waiting"

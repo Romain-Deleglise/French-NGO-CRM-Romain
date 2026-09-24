@@ -60,7 +60,8 @@ deux ne peut appeler l'autre — c'est voulu. L'hôte fait l'intermédiaire.
 
 2. civicrm_lookup.py --list-pending      → la liste des adresses
 
-3. l'hôte : cv api4 Contact.get          → JSON (lecture seule)
+3. l'hôte : cv api4 Email.get             → quelle adresse appartient à qui
+           puis cv api4 Contact.get       → les fiches (lecture seule)
 
 4. civicrm_lookup.py --apply             → crée la fiche, son média, son alignement
 
@@ -75,7 +76,37 @@ sudo /opt/scripts/civicrm-sync.sh            # dry run, n'écrit rien
 sudo /opt/scripts/civicrm-sync.sh --commit
 ```
 
-À planifier après l'import des mails de membres (06:10), donc vers **06:30**.
+### Planification
+
+`civicrm-sync.service` + `civicrm-sync.timer`, à **06:30 UTC** — après
+l'import des mails de membres de 06:10, qui est précisément ce qui remplit la
+file que cette synchronisation vide. L'ordre compte.
+
+```bash
+sudo cp utils/deploy/civicrm-sync.sh /opt/scripts/ && sudo chmod +x /opt/scripts/civicrm-sync.sh
+sudo cp utils/deploy/civicrm-sync.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now civicrm-sync.timer
+systemctl list-timers civicrm-sync.timer
+journalctl -u civicrm-sync -n 40        # après le premier passage
+```
+
+Lancez d'abord `sudo /opt/scripts/civicrm-sync.sh` **sans `--commit`** : rien
+n'est écrit et la sortie dit exactement ce qui serait créé.
+
+### Pourquoi deux requêtes pour les adresses
+
+CiviCRM porte **~1,6 adresse par journaliste** (21 401 adresses pour 12 987
+contacts), et celle à laquelle un membre a écrit n'est souvent **pas la
+primaire**. Filtrer `Contact.get` sur `email_primary.email` les manque en
+silence — l'adresse est alors classée « inconnue de CiviCRM » alors qu'elle y
+est. D'où `Email.get` d'abord, pour savoir à quel contact appartient chaque
+adresse, puis `Contact.get` sur ces identifiants.
+
+Quand la fiche existe déjà avec une autre adresse, celle qui a été rencontrée
+est enregistrée dans **`person_emails`** — la table d'alias que l'import de
+mails consulte déjà. Sans ça, le prochain mail venant de cette adresse
+repartirait en file indéfiniment.
 
 ---
 
@@ -182,39 +213,28 @@ abîmées.
   contacts arrivent en `Autre`, avec leur sous-type d'origine conservé dans les
   notes. CiviCRM en compte **104 experts IA et 4 influenceurs** — les experts
   méritent probablement leur propre type, les influenceurs peuvent attendre.
-- **Les rebonds — à vérifier.** Un comptage de `email_primary.on_hold` sur les
-  adresses *primaires* ne remonte que 74 marquées sur 12 569 (0,6 %), ce qui est
-  bas pour un fichier presse. Deux explications possibles, et elles n'ont pas les
-  mêmes conséquences : soit ces adresses n'ont jamais été sollicitées (CiviCRM ne
-  pose `on_hold` qu'après un envoi réel), soit le comptage regarde au mauvais
-  endroit — les rebonds vivent aussi dans `MailingEventBounce`, `on_hold` n'est
-  posé qu'au-delà d'un seuil de rebonds durs, et une adresse presse peut ne pas
-  être l'adresse primaire du contact. À trancher avec les requêtes de
-  `#diagnostiquer-les-rebonds` ci-dessous.
+- **Les rebonds fonctionnent.** Vérifié : **3 746 rebonds enregistrés**
+  (`MailingEventBounce`) et **63 391 envois en file** (`MailingEventQueue`). Le
+  mécanisme tourne, les adresses ont bien été sollicitées. Sur les 21 403
+  adresses de journalistes, **75 sont suspendues** (73 en `on_hold = 1` après
+  rebonds, 2 manuellement). Le taux est réellement bas, ce n'est pas un défaut de
+  mesure — CiviCRM ne pose `on_hold` qu'au-delà d'un seuil de rebonds durs, donc
+  une partie des 3 746 rebonds n'a pas encore atteint ce seuil.
 
-  Quoi qu'il en soit, **on ne filtre pas sur les rebonds ici** : il s'agit
-  d'identifier quelqu'un avec qui on a *déjà* échangé, pas de décider si on peut
-  lui écrire. Une adresse morte désigne quand même une personne. Le sujet compte
-  en revanche beaucoup pour les envois de CP.
+  **On ne filtre volontairement pas dessus ici** : il s'agit d'identifier
+  quelqu'un avec qui on a *déjà* échangé, pas de décider si on peut lui écrire.
+  Une adresse morte désigne quand même une personne. Le sujet compte en revanche
+  beaucoup pour les envois de CP.
 
-### Diagnostiquer les rebonds
+### Suivre l'état des adresses
 
 ```bash
-# Toutes les adresses, pas seulement les primaires
+# Suspensions, sur TOUTES les adresses (pas seulement les primaires)
 docker exec civicrm-web cv api4 Email.get '{"select":["on_hold","COUNT(id) AS total"],"where":[["contact_id.contact_sub_type","CONTAINS","Journaliste"]],"groupBy":["on_hold"]}' --cwd=/var/www/html
 
-# Les rebonds enregistrés, indépendamment du seuil qui déclenche on_hold
+# Rebonds enregistrés, indépendamment du seuil qui déclenche on_hold
 docker exec civicrm-web cv api4 MailingEventBounce.get '{"select":["COUNT(id) AS total"]}' --cwd=/var/www/html
-
-# Les contacts écartés autrement que par on_hold
-docker exec civicrm-web cv api4 Contact.get '{"select":["COUNT(id) AS total"],"where":[["contact_sub_type","CONTAINS","Journaliste"],["is_deleted","=",false],["do_not_email","=",true]]}' --cwd=/var/www/html
-
-# Combien de journalistes ont réellement reçu un mailing
-docker exec civicrm-web cv api4 MailingEventQueue.get '{"select":["COUNT(id) AS total"]}' --cwd=/var/www/html
 ```
-
-La dernière est la plus parlante : si elle renvoie un nombre très inférieur à
-12 900, c'est la première explication qui est la bonne.
 - **Les relances en double.** CiviCRM porte aussi `Suivi_Activit_s_Pause_IA`
   (Résultat, Suivi Requis, Score Impact, Date Prochain Contact), qui recouvre le
   `/todo` d'ici. Il faudra décider qui fait référence pour « quand relancer qui »,

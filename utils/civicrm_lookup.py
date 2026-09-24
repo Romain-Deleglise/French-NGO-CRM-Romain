@@ -78,6 +78,16 @@ def ensure_civicrm_tables(db):
         );
         CREATE INDEX IF NOT EXISTS idx_civicrm_pending_status
             ON civicrm_pending(status);
+        -- Same definition as in import_member_mails.ensure_member_tables: a
+        -- person's other addresses, so they match directly next time. Created
+        -- here too because the CiviCRM sync may well run before the mail import
+        -- ever has on a fresh database.
+        CREATE TABLE IF NOT EXISTS person_emails (
+            email      TEXT PRIMARY KEY,
+            person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            source     TEXT,
+            created_at TEXT NOT NULL
+        );
         """
     )
 
@@ -194,6 +204,18 @@ def create_or_attach(db, row, now, person_index, media_index):
         ).lastrowid
         person_index[key] = person_id
         action = "created"
+    # CiviCRM holds ~1.6 addresses per journalist (21 401 for 12 987 contacts),
+    # so the address a member wrote to is often not the fiche's. Keep it as an
+    # alias, in the very table the mail import resolves against, or the next mail
+    # from it would be queued all over again.
+    current = db.execute("SELECT email FROM persons WHERE id = ?",
+                         (person_id,)).fetchone()
+    if row["email"] and current and (current[0] or "").strip().lower() != row["email"]:
+        db.execute(
+            "INSERT OR IGNORE INTO person_emails (email, person_id, source, "
+            "created_at) VALUES (?, ?, 'civicrm', ?)",
+            (row["email"], person_id, now),
+        )
     if row["media_name"]:
         link_person_media(db, person_id, row["media_name"], now, media_index)
     return person_id, action
@@ -244,11 +266,26 @@ def cmd_apply(db, args):
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = now[:10]
 
-    by_email = {}
+    by_email, by_id = {}, {}
     for record in records:
+        by_id[record.get("id")] = record
         mail = clean_email(record.get("email_primary.email"))
         if mail:
             by_email.setdefault(mail, record)
+
+    # A journalist often has several addresses in CiviCRM and the one a member
+    # wrote to is frequently not the primary, so --emails carries the
+    # address -> contact mapping that `Email.get` produced. Without it we fall
+    # back to primary addresses only, which is how this started and why a
+    # secondary address used to be filed as "unknown to CiviCRM".
+    addr_to_contact = {}
+    if args.emails:
+        with open(args.emails, encoding="utf-8") as fh:
+            for row in json.load(fh):
+                mail = clean_email(row.get("email"))
+                cid = row.get("contact_id")
+                if mail and cid is not None:
+                    addr_to_contact.setdefault(mail, cid)
 
     pending = [r[0] for r in db.execute(
         "SELECT email FROM civicrm_pending WHERE status = 'pending'")]
@@ -258,7 +295,7 @@ def cmd_apply(db, args):
 
     created = attached = absent = already = 0
     for address in pending:
-        record = by_email.get(address)
+        record = by_email.get(address) or by_id.get(addr_to_contact.get(address))
         if record is None:
             db.execute(
                 "UPDATE civicrm_pending SET status = 'absent', resolved_at = ? "
@@ -273,6 +310,10 @@ def cmd_apply(db, args):
             already += 1
             continue
         row = contact_to_person(record, today)
+        if row is not None:
+            # The address the member actually corresponded with is the one worth
+            # storing — it is what future mails will carry.
+            row["email"] = address
         if row is None or not row["email"]:
             db.execute(
                 "UPDATE civicrm_pending SET status = 'absent', resolved_at = ? "
@@ -318,6 +359,9 @@ def main():
                        help="print the addresses awaiting a CiviCRM lookup")
     group.add_argument("--apply", metavar="FILE",
                        help="JSON written by `cv api4 Contact.get`")
+    parser.add_argument("--emails", metavar="FILE",
+                        help="JSON written by `cv api4 Email.get` (address -> "
+                             "contact), so secondary addresses resolve too")
     group.add_argument("--stats", action="store_true", help="queue counts by status")
     group.add_argument("--retry-absent", action="store_true",
                        help="put addresses CiviCRM didn't know back in the queue")

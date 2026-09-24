@@ -131,6 +131,7 @@ class QueueAndApplyTests(unittest.TestCase):
             );
             """
         )
+        # NB: person_emails is created by ensure_civicrm_tables below.
         cl.ensure_civicrm_tables(self.db)
 
     def tearDown(self):
@@ -236,6 +237,35 @@ class QueueAndApplyTests(unittest.TestCase):
             "SELECT COUNT(*) FROM organisations WHERE org_type = 'Média'").fetchone()
         self.assertEqual(total, 1)
         self.assertIsNotNone(org_id)
+
+    def test_a_second_address_is_kept_as_an_alias(self):
+        # CiviCRM holds ~1.6 addresses per journalist. A member wrote to the
+        # desk address; the fiche already carries the newsroom one. The second
+        # has to stay matchable, or the next mail from it is queued again.
+        self.db.execute(
+            "INSERT INTO persons (name, contact_type, stance, email, created_at) "
+            "VALUES ('Tristan Vey', 'Journaliste', 'Inconnu', 'tvey@lefigaro.fr', ?)",
+            (NOW,))
+        row = cc.contact_to_person(FIGARO, TODAY)
+        row["email"] = "tristan.vey@lefigaro.fr"          # the matched address
+        person_id, action = cl.create_or_attach(
+            self.db, row, NOW, cl.load_person_index(self.db),
+            load_media_index(self.db))
+        self.assertEqual(action, "attached")
+        alias = self.db.execute(
+            "SELECT person_id, source FROM person_emails WHERE email = ?",
+            ("tristan.vey@lefigaro.fr",)).fetchone()
+        self.assertEqual(alias, (person_id, "civicrm"))
+        # …and the fiche's own address is untouched.
+        mail, = self.db.execute(
+            "SELECT email FROM persons WHERE id = ?", (person_id,)).fetchone()
+        self.assertEqual(mail, "tvey@lefigaro.fr")
+
+    def test_no_alias_row_when_the_address_is_the_fiche_s_own(self):
+        cl.create_or_attach(self.db, cc.contact_to_person(FIGARO, TODAY), NOW,
+                            cl.load_person_index(self.db), load_media_index(self.db))
+        total, = self.db.execute("SELECT COUNT(*) FROM person_emails").fetchone()
+        self.assertEqual(total, 0)
 
     def test_a_homonym_in_another_type_stays_a_separate_fiche(self):
         # "Laurent Alexandre" is both an LFI député and a chroniqueur.
