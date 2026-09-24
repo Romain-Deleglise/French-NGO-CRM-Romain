@@ -129,6 +129,40 @@ docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py \
   --apply /tmp/civi-contacts.json --emails /tmp/civi-emails.json $COMMIT
 
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+say "4b/5  Addresses left over: try each média's own convention"
+# Seeding gave us real addresses per média, and a newsroom follows one
+# convention (Le Figaro: <initiale><nom>). So an address CiviCRM holds no record
+# of can still be traced to a journalist it knows BY NAME. Recognition only —
+# nothing here invents an address to write to.
+docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py --patterns \
+  > "$WORK/patterns.json" 2>/dev/null || echo "{}" > "$WORK/patterns.json"
+
+MEDIAS=$(python3 - "$WORK/patterns.json" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except (ValueError, OSError):
+    data = {}
+print(json.dumps(sorted({v["media"] for v in data.values()})))
+PY
+)
+
+if [ "$MEDIAS" = "[]" ]; then
+  echo "   aucune convention connue pour l'instant (amorçage requis : civicrm-seed.sh)"
+else
+  echo "   médias concernés : $MEDIAS"
+  civi Contact.get \
+    "{\"select\":[\"id\",\"display_name\",\"contact_sub_type\",\"email_primary.email\",\"employer_id.display_name\",\"Analyse_strat_gique_Pause_IA.Alignement\",\"Analyse_strat_gique_Pause_IA.Niveau_d_influence\",\"Description_courte.Description_courte\",\"Compte_R_seaux_Sociaux.Twitter\",\"Compte_R_seaux_Sociaux.LinkedIn\"],\"where\":[[\"employer_id.display_name\",\"IN\",$MEDIAS],[\"contact_sub_type\",\"CONTAINS\",\"Journaliste\"],[\"is_deleted\",\"=\",false]],\"limit\":0}" \
+    > "$WORK/civi-names.json"
+  echo "   $(grep -c '"id"' "$WORK/civi-names.json" || true) journaliste(s) de ces médias"
+  docker cp "$WORK/civi-names.json" "$CRM_CONTAINER:/tmp/civi-names.json"
+  docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py \
+    --apply-names /tmp/civi-names.json $COMMIT
+fi
+
+# --------------------------------------------------------------------------- #
 say "5/5  Re-linking the mails that were waiting"
 if [ -n "$COMMIT" ]; then
   # A full sweep: the mails skipped earlier now match. `imported_mails` dedups,

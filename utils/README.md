@@ -510,3 +510,4 @@ a écrit, en lecture seule, orchestrés par `deploy/civicrm-sync.sh` sur l'hôte
 
 | `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. `--list`, `--google-rule` (à coller dans la règle Workspace). |
 | `deploy/civicrm-seed.sh` | Amorçage unique : crée les fiches d'un groupe presse restreint, puis affiche les domaines à coller dans la règle Google Workspace. |
+| `mailpatterns.py` | La convention d'adresses de chaque média, apprise sur les adresses connues. Sert à **reconnaître** une adresse, jamais à en construire une pour y écrire. |

@@ -41,6 +41,7 @@ from civicrm import (  # noqa: E402
     contact_to_person, norm_name,
 )
 from import_civicrm_medias import link_person_media, load_media_index  # noqa: E402
+import mailpatterns  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.environ.get("IMAP_DB_PATH", os.path.join(ROOT, "meetings.db"))
@@ -393,6 +394,140 @@ def cmd_seed(db, args):
     return 0
 
 
+def domain_conventions(db):
+    """{domain: {"media": name, "template": how addresses are built there}}.
+
+    Learned from the fiches we already hold — the seeded national group is what
+    makes this worth anything. A domain appears only when its convention is
+    unambiguous AND we know which média it belongs to, since resolving needs
+    both: the template to rebuild an address, the média to know whose names to
+    compare it against.
+    """
+    pairs, domain_media = [], {}
+    for name, mail, media in db.execute(
+        """
+        SELECT p.name, p.email, o.name
+          FROM persons p
+          LEFT JOIN person_organisations po ON po.person_id = p.id
+          LEFT JOIN organisations o ON o.id = po.organisation_id
+                                   AND o.org_type = 'Média'
+         WHERE p.email IS NOT NULL AND p.email != ''
+        """
+    ):
+        pairs.append((name, mail))
+        domain = (mail or "").strip().lower().partition("@")[2]
+        if domain and media:
+            domain_media.setdefault(domain, {}).setdefault(media, 0)
+            domain_media[domain][media] += 1
+
+    out = {}
+    for domain, template in mailpatterns.learn(pairs).items():
+        medias = domain_media.get(domain)
+        if not medias:
+            continue
+        # A domain can carry a couple of mislinked fiches; the média most of
+        # them point at is the one that owns it.
+        best = max(medias.items(), key=lambda kv: kv[1])[0]
+        out[domain] = {"media": best, "template": template}
+    return out
+
+
+def cmd_patterns(db, args):
+    """Print the conventions needed for the addresses still waiting.
+
+    The host feeds the média names back into `cv api4 Contact.get` to fetch
+    those journalists by name — see utils/deploy/civicrm-sync.sh.
+    """
+    conventions = domain_conventions(db)
+    wanted = {}
+    for (address,) in db.execute(
+        "SELECT email FROM civicrm_pending WHERE status IN ('pending', 'absent')"
+    ):
+        domain = (address or "").partition("@")[2]
+        if domain in conventions:
+            wanted[domain] = conventions[domain]
+    print(json.dumps(wanted, ensure_ascii=False, indent=2))
+    log(f"{len(wanted)} domaine(s) avec une convention connue, sur "
+        f"{len(conventions)} apprise(s).", )
+    return 0
+
+
+def cmd_apply_names(db, args):
+    """Resolve addresses by convention, against journalists CiviCRM knows by name.
+
+    The last resort, and the only step that identifies someone from something
+    other than their actual address. A convention is a habit rather than a rule,
+    so every fiche it produces says so in its notes — and an address two
+    journalists could both own is refused, never split.
+    """
+    with open(args.apply_names, encoding="utf-8") as fh:
+        records = json.load(fh)
+
+    conventions = domain_conventions(db)
+    by_media = {}
+    for record in records:
+        media = (record.get("employer_id.display_name") or "").strip()
+        name = (record.get("display_name") or "").strip()
+        if media and name:
+            by_media.setdefault(norm_name(media), []).append(
+                (record.get("id"), name, record))
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    today = now[:10]
+    person_index = load_person_index(db)
+    media_index = load_media_index(db)
+
+    pending = [r[0] for r in db.execute(
+        "SELECT email FROM civicrm_pending WHERE status IN ('pending', 'absent')")]
+    resolved = ambiguous = unmatched = untouched = 0
+    for address in pending:
+        domain = address.partition("@")[2]
+        convention = conventions.get(domain)
+        if not convention:
+            untouched += 1
+            continue
+        candidates = by_media.get(norm_name(convention["media"]), [])
+        hits = mailpatterns.resolve_all(
+            address, convention["template"], [(c[0], c[1]) for c in candidates])
+        if len(hits) > 1:
+            # A real collision — two journalists at the same média whose names
+            # build the same address. Worth a human eye, unlike a plain miss.
+            ambiguous += 1
+            names = ", ".join(n for _i, n in hits)
+            log(f"  ! {address} : {names} — impossible de trancher, laissée en file")
+            continue
+        if not hits:
+            unmatched += 1
+            continue
+        hit = hits[0]
+        record = next(c[2] for c in candidates if c[0] == hit[0])
+        row = contact_to_person(record, today)
+        if row is None:
+            untouched += 1
+            continue
+        row["email"] = address
+        row["notes"] += (
+            f"\nAdresse reconnue par la convention de {convention['media']} "
+            f"(« {convention['template']} ») — à confirmer.")
+        if args.commit:
+            person_id, _action = create_or_attach(
+                db, row, now, person_index, media_index)
+            db.execute(
+                "UPDATE civicrm_pending SET status = 'resolved', resolved_at = ?, "
+                "person_id = ? WHERE email = ?", (now, person_id, address))
+        resolved += 1
+        log(f"  ? {row['name']} — {convention['media']} <{address}> "
+            f"[motif {convention['template']}, à confirmer]")
+
+    if args.commit:
+        db.commit()
+    prefix = "" if args.commit else "[dry-run] "
+    log(f"{prefix}Par convention. Reconnues : {resolved} | ambiguës (plusieurs "
+        f"journalistes possibles) : {ambiguous} | aucun nom ne correspond : "
+        f"{unmatched} | sans convention applicable : {untouched}.")
+    return 0
+
+
 def cmd_prune(db, args):
     """Drop queued addresses the filters now reject.
 
@@ -527,6 +662,12 @@ def main():
                        help="put addresses CiviCRM didn't know back in the queue")
     group.add_argument("--prune", action="store_true",
                        help="drop queued addresses the current filters reject")
+    group.add_argument("--patterns", action="store_true",
+                       help="print the média conventions the pending addresses "
+                            "need, as JSON")
+    group.add_argument("--apply-names", metavar="FILE",
+                       help="JSON of journalists by média: resolve the remaining "
+                            "addresses through their média's convention")
     group.add_argument("--seed", metavar="FILE",
                        help="create fiches for a whole CiviCRM group, to get the "
                             "cycle started (keep it narrow — see SEED_SOFT_CAP)")
@@ -555,6 +696,10 @@ def main():
             return cmd_prune(db, args)
         if args.seed:
             return cmd_seed(db, args)
+        if args.patterns:
+            return cmd_patterns(db, args)
+        if args.apply_names:
+            return cmd_apply_names(db, args)
         return cmd_apply(db, args)
     finally:
         db.close()

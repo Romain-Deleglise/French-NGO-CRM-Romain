@@ -155,6 +155,55 @@ assemblee-nationale.fr europarl.europa.eu franceinfo.fr latribune.fr lefigaro.fr
 Tant qu'un domaine n'est pas dans cette règle, Google ne copie aucun de ses
 mails et rien en aval ne peut le rapprocher — quel que soit le code de ce dépôt.
 
+## Apprendre la convention de chaque média
+
+L'amorçage ne sert pas qu'à remplir quelques fiches. Les adresses qu'il apporte
+valent plus qu'elles-mêmes : **une rédaction suit presque toujours une seule
+convention**, donc quelques adresses réelles disent comment *toutes* les
+adresses de ce média sont construites.
+
+```
+tvey@lefigaro.fr        Tristan Vey
+ebastie@lefigaro.fr     Eugénie Bastié      →  lefigaro.fr = <initiale><nom>
+cdemalet@lefigaro.fr    Caroline De Malet
+```
+
+Dès lors, un mail venant de `mlefebvre@lefigaro.fr` — une adresse que **ni le
+CRM ni CiviCRM ne connaissent** — se remonte jusqu'à une « M… Lefebvre » qui
+écrit pour Le Figaro, personne que CiviCRM connaît par son **nom**.
+
+C'est l'étape `4b/5` de `civicrm-sync.sh`, et le dernier recours : elle
+n'intervient que sur les adresses que la correspondance exacte n'a pas résolues.
+
+### Ce que ça ne fait pas
+
+**Ça reconnaît des adresses, ça n'en invente jamais.** Construire une adresse à
+partir d'un nom pour y écrire serait deviner les coordonnées de quelqu'un, avec
+un risque réel d'écrire à un inconnu. Les modèles ne servent que dans un sens :
+reconstruire l'adresse d'une personne **connue** et la comparer à une adresse
+réellement apparue dans la boîte d'audit.
+
+### Les garde-fous
+
+- **Deux exemples minimum, et aucune contradiction.** Une seule adresse
+  correspond toujours à plusieurs modèles ; en faire une convention
+  mésattribuerait tous les mails suivants. Un média qui mélange les conventions
+  n'en reçoit aucune et retombe sur le rapprochement générique.
+- **L'ambiguïté est refusée, jamais tranchée.** `pdupont@lefigaro.fr` avec un
+  Pierre Dupont *et* un Paul Dupont à la rédaction : l'adresse reste en file
+  avec les deux noms affichés, pour qu'un humain décide.
+- **Chaque fiche le dit.** Ses notes portent « Adresse reconnue par la
+  convention de LE FIGARO (« pnom ») — à confirmer ». Une convention est une
+  habitude, pas une règle.
+
+Vérifié de bout en bout : 4 journalistes du Figaro semés → convention `pnom`
+apprise → `mlefebvre@lefigaro.fr` reconnue, `pdupont@lefigaro.fr` refusée pour
+homonymie, `zzzinconnu@lefigaro.fr` laissée en file.
+
+```bash
+python3 utils/civicrm_lookup.py --patterns        # les conventions apprises
+```
+
 ---
 
 ## Correspondance des données
