@@ -362,6 +362,27 @@ class QueueAndApplyTests(unittest.TestCase):
         total, = self.db.execute("SELECT COUNT(*) FROM person_emails").fetchone()
         self.assertEqual(total, 0)
 
+    def test_one_person_at_two_medias_stays_one_fiche(self):
+        # Pierre Dandumont writes for MacGeneration and iGeneration; the real
+        # export carries him twice. Anthony Morel likewise, for BFM and RMC.
+        first = dict(FIGARO, display_name="Pierre Dandumont",
+                     **{"employer_id.display_name": "MACGENERATION",
+                        "email_primary.email": "pd@macg.fr"})
+        second = dict(first, **{"employer_id.display_name": "IGENERATION",
+                                "email_primary.email": "pd@igen.fr"})
+        index, media_index = cl.load_person_index(self.db), load_media_index(self.db)
+        pid1, a1 = cl.create_or_attach(
+            self.db, cc.contact_to_person(first, TODAY), NOW, index, media_index)
+        pid2, a2 = cl.create_or_attach(
+            self.db, cc.contact_to_person(second, TODAY), NOW, index, media_index)
+        self.assertEqual((a1, a2), ("created", "attached"))
+        self.assertEqual(pid1, pid2)
+        medias = [r[0] for r in self.db.execute(
+            "SELECT o.name FROM organisations o "
+            "JOIN person_organisations po ON po.organisation_id = o.id "
+            "WHERE po.person_id = ? ORDER BY o.name", (pid1,))]
+        self.assertEqual(medias, ["IGENERATION", "MACGENERATION"])
+
     def test_a_homonym_in_another_type_stays_a_separate_fiche(self):
         # "Laurent Alexandre" is both an LFI député and a chroniqueur.
         self.db.execute(

@@ -374,12 +374,17 @@ def cmd_seed(db, args):
         if row["email"] in known:
             skipped += 1
             continue
+        key = (norm_name(row["name"]), row["contact_type"])
         if args.commit:
             _pid, action = create_or_attach(db, row, now, person_index, media_index)
         else:
-            action = ("attached"
-                      if (norm_name(row["name"]), row["contact_type"]) in person_index
-                      else "created")
+            # Mirror what --commit would do, including for a name appearing twice
+            # in the same export: Pierre Dandumont writes for MacGeneration *and*
+            # iGeneration, so the second row attaches a média to one fiche rather
+            # than creating a second. Without seeding the index here, the dry run
+            # promises more fiches than the real run creates.
+            action = "attached" if key in person_index else "created"
+            person_index[key] = -1
         known.add(row["email"])
         if action == "created":
             created += 1
