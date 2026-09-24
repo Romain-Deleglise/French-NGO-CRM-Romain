@@ -1,0 +1,221 @@
+# CLAUDE.md — carte du projet pour un agent IA
+
+CRM interne de **PauseIA** (« Journal des rencontres et des médias ») : une app
+**Flask + SQLite** (un seul fichier `app.py`, templates Jinja, pas de build front),
+déployée en **Docker** derrière Caddy sur un serveur Hetzner. Ce fichier est le
+point d'entrée pour une IA qui reprend le projet : il dit **où sont les choses**,
+**ce qui est déjà automatisé**, et **ce qui reste à faire**.
+
+> Docs de détail : `README.md` (app), `BACKWARD_COMPATIBILITY.md` (schéma & fusion
+> des CRM), `utils/README.md` (tous les scripts), `AUTOMATISATION_MAILS_MEMBRES.md`
+> et `AUTOMATISATION_MAILS_CAMPAGNE.md` (les deux pipelines mails),
+> `AUTOMATISATION_CIVICRM.md` (le pont vers le second CRM de l'association, d'où
+> viennent les adresses de journalistes). Lis-les avant de modifier la zone
+> correspondante.
+
+> **Deux CRM tournent sur le serveur** et c'est structurant : celui-ci, le journal
+> des interactions, et **CiviCRM**, qui sert aux envois de masse et porte ~12 900
+> journalistes. Le second alimente le premier en lecture seule, à la demande.
+> Ne jamais écrire dans CiviCRM depuis ici.
+
+## 1. Modèle de données (SQLite, `meetings.db`)
+
+Tout tourne autour de **`persons`** (contacts) et **`organisations`**, reliés par
+`person_organisations`. Migrations idempotentes dans `init_db()` (`app.py`) —
+jamais de fichier de migration séparé, on ajoute des `ALTER TABLE … ADD COLUMN`
+gardés par un test de présence de colonne.
+
+- **`persons`** : un contact. Colonne clé **`contact_type`** ∈ `CONTACT_TYPES`
+  (`Journaliste`, `Politique`, `Religieux·se`, `Membre d'une ONG`,
+  `Membre d'une entreprise`, `Autre`). Champs notables : `role` (fonctions,
+  cumulables), `political_group` (nullable depuis la fusion), `stance` (position
+  sur PauseIA), `email`, `in_office` (0 = mandat terminé, fiche conservée), etc.
+- **`organisations`** : `ORG_TYPES` = `Média`, `Groupe politique`, `Culte`, `ONG`,
+  `Entreprise`, `Autre`. Correspondance type de contact ↔ type d'orga dans
+  `ORG_TYPE_BY_CONTACT_TYPE` (`app.py`).
+- **`meetings`** / `mails` (+ `mail_persons`, `mail_members`, `mail_bodies`,
+  `mail_thread`), **`members`** (membres @pauseia.fr, auto-créés par l'import),
+  **`interventions`** / `contents` (médiatiques), **`pending_*`** (file de
+  modération), `moderators` (les « Utilisateurices »).
+- **Pont CiviCRM** : `civicrm_pending` (file des adresses à identifier :
+  `pending` / `resolved` / `absent`) et `person_emails` (autres adresses d'une
+  personne, apprises par fil de discussion ou par CiviCRM — c'est la table que
+  le rapprochement des mails consulte).
+- **Provenance** : `added_by` / `validated_by` NULL = importé par script ;
+  renseigné = saisi/validé à la main (les backfills ne touchent jamais ces
+  dernières).
+
+## 2. Interface
+
+Nav (voir `templates/base.html`) : TODO · Fait · Répartition · Calendrier ·
+**Suivi des échanges** · Rencontres · Personnes · Courriels · Organisations ·
+Interventions · Contenus · Modération · Utilisateurices.
+
+- **Suivi des échanges** (`/echanges`) : vue unifiée type boîte mail (citoyens +
+  membres + élu·es), fils regroupés, sous-onglets *Échanges · Membres · Tous les
+  courriels*. Détail d'un fil = `conversation.html` (cartes expéditeur→destinataires).
+- Les listes filtrent par `contact_type` ; badge « Non élu·e actuellement » quand
+  `in_office = 0`.
+
+## 3. Ce qui est DÉJÀ automatisé
+
+### a) Peuplement des contacts (scripts `utils/`, idempotents, `--commit`/`--dry-run`)
+- **Élu·es** : `extract_deputes` + `insert_deputes`, `insert_senateurices`,
+  `extract_gouvernement` + `insert_gouvernement`, `extract_eurodeputes` +
+  `insert_eurodeputes`. Orchestrés par **`sync_officials.py`** (les 4 chambres) +
+  réconciliation `in_office`.
+- **Emails des élu·es** : `sync_emails_from_elus.py` (depuis `elus.json`).
+- **Médias & journalistes** : `insert_medias_journalistes.py` (données embarquées).
+- **Religieux·ses** : `insert_cultes.py` + `extract_eveques`/`insert_eveques`
+  (+ `extract_eveques_orthodoxes`).
+- **Journalistes & médias** : voir le pont CiviCRM ci-dessous — c'est **là** que
+  les adresses de presse arrivent, pas dans `insert_medias_journalistes.py`, qui
+  ne porte que des noms.
+
+### b) Intégration des mails (récurrent, timers systemd)
+- **Citoyens → élu·es** : `import_campaign_mails.py` (BCC campagne). Voir
+  `AUTOMATISATION_MAILS_CAMPAGNE.md`. RGPD : identité citoyen jamais stockée.
+- **Membres ↔ élu·es** : `import_member_mails.py` (règle Gmail invisible →
+  boîte d'audit IMAP). Matching robuste (adresse/alias/corps/fil/motif de nom),
+  membres auto-créés. Voir `AUTOMATISATION_MAILS_MEMBRES.md`.
+
+### c) Pont CiviCRM — lecture seule (`AUTOMATISATION_CIVICRM.md`)
+
+CiviCRM 6.15 Standalone tourne **sur le même serveur** et porte ~12 900
+journalistes avec leur adresse et leur média. On ne les recopie pas : les
+formulaires de rencontre et de courriel rendent un `<option>` **et** une case à
+cocher par personne, donc 17 000 `persons` rendraient les écrans de saisie
+inutilisables — et un journal d'interactions n'a que faire de 12 900 personnes à
+qui personne n'a jamais écrit.
+
+- **À la demande** : `import_member_mails.py` met en file (`civicrm_pending`)
+  l'adresse qu'il ne sait pas rattacher ; l'hôte interroge CiviCRM ;
+  `civicrm_lookup.py --apply` crée la fiche avec son média et son alignement ;
+  un `--backfill` rattache enfin le mail.
+- **En masse, l'exception** : les 168 médias (`import_civicrm_medias.py`) —
+  organisations, donc aucun impact sur les sélecteurs.
+- **Amorçage** : `deploy/civicrm-seed.sh` crée les fiches d'un groupe presse
+  restreint (12 « Presse - Nationale »), plafonné à 1 500 par `SEED_SOFT_CAP`.
+  Nécessaire une fois, pour casser l'œuf et la poule décrit plus bas.
+- **Conventions d'adresses** : `mailpatterns.py` apprend sur les adresses réelles
+  comment chaque rédaction construit les siennes (Le Figaro = `<initiale><nom>`),
+  pour **reconnaître** une adresse jamais vue. Jamais pour en fabriquer une.
+
+Trois règles non négociables : **APIv4 uniquement, jamais MySQL** (le schéma
+bouge entre versions majeures, l'API non) ; **`cv` en local, pas REST** (aucune
+clé à stocker, rien d'exposé) ; **un seul sens, lecture seule** — CiviCRM porte
+les donateurs et les contributions Stripe/HelloAsso. Aucun script d'ici ne peut
+y écrire. `utils/civicrm.py` concentre tout ce qui est CiviCRM-dépendant et
+s'ouvre sur un **test de contrat** : un champ renommé arrête la synchro au lieu
+d'écrire des données fausses.
+
+### d) Domaines connus, lus dans la base (`maildomains.py`)
+
+`OFFICIAL_DOMAINS` n'est plus en dur. La liste est dérivée des adresses en base :
+un domaine partagé par **au moins deux personnes connues** appartient à une
+organisation. Les messageries grand public (`gmail.com`, `orange.fr`…) en sont
+exclues par construction — plusieurs journalistes y ont une adresse perso, ce qui
+ne dit rien du propriétaire d'une *nouvelle* adresse gmail. Les trois domaines
+parlementaires restent un plancher.
+
+### e) Planification (`utils/deploy/*.timer`, UTC)
+- `sync-officials` (lun. 05:30, les 4 chambres + `in_office`) — remplace l'ancien
+  `sync-eurodeputes` (désactivé).
+- `import-campaign-mails` (06:00, sync emails + import citoyens).
+- `import-member-mails` (06:10).
+- `civicrm-sync` (06:30) — **après** l'import des mails de membres, qui est
+  précisément ce qui remplit la file que cette synchro vide.
+
+## 4. Ce qui n'est PAS (encore) automatisé — pistes
+
+Le peuplement/intégration ci-dessus est **partiel**. Chantiers ouverts :
+
+- **Organisations / groupes politiques** : les `persons` élu·es sont
+  auto-synchronisées, mais les **organisations** (groupes politiques, médias,
+  cultes) et les liens `person_organisations` ne sont **pas** rafraîchis par un
+  timer — peuplés une fois par les `insert_*`. → automatiser leur mise à jour.
+- **Types de contact sans source auto** : **ONG**, **Entreprises**, et la plupart
+  des **cultes** hors diocèses n'ont pas d'extract/sync (pas de dataset public
+  exploitable, cf. commentaires de `insert_cultes.py`). → identifier des sources.
+- **Élus locaux** (maires, conseillers régionaux/départementaux, EPCI) : ~500 000,
+  **absents**. Le RNE (data.gouv) existe mais **sans emails** → matching impossible
+  par adresse. Piste retenue (non implémentée) : *capture assistée par modération*
+  — les mails de membres vers une adresse externe inconnue vont dans une file
+  « élu local à confirmer », un humain valide, l'adresse est apprise. La capture
+  Gmail attrape **déjà** ces mails (règle sur `@pauseia.fr`), ils sont juste
+  ignorés faute de fiche. → **la moitié existe maintenant** : `civicrm_pending`
+  est exactement cette file, alimentée par `queue_unknown_counterparts`. Il reste
+  à lui donner une source pour les élus locaux, là où la presse a CiviCRM.
+- **Interventions / Contenus** : entités présentes, mais aucune ingestion
+  automatique (ex. veille médias). → à concevoir. Le difficile n'est pas de
+  trouver les articles (un flux RSS par média suffit) mais de rattacher un
+  article à **la bonne fiche journaliste** — les signatures sont incohérentes,
+  souvent absentes — et de qualifier la position vis-à-vis de l'IA, qui est un
+  jugement, pas une extraction.
+- **La règle Google Workspace est hors dépôt, et c'est le maillon qu'on oublie.**
+  Elle ne copie dans la boîte d'audit que les mails touchant un domaine qu'elle
+  connaît. Tant qu'un domaine de média n'y est pas, Google ne copie **aucun** de
+  ses mails et rien en aval ne peut le rapprocher, quelle que soit la qualité du
+  code ici. `maildomains.py --google-rule` sort la ligne à coller ; **à relancer
+  après chaque vague d'import CiviCRM**.
+- **`Expert IA` (104 contacts) et `Influenceur` (4)** existent comme sous-types
+  CiviCRM mais pas dans `CONTACT_TYPES` : ils arrivent en `Autre`, sous-type
+  d'origine conservé dans les notes. Les ajouter suppose de décider à quel
+  `ORG_TYPE` les rattacher (CiviCRM a un `Recherche/Éducation` qui n'existe pas
+  ici).
+- **Les relances en double** : CiviCRM porte aussi `Suivi_Activit_s_Pause_IA`
+  (Résultat, Suivi Requis, Date Prochain Contact), qui recouvre le `/todo` d'ici.
+  À trancher : qui fait référence pour « quand relancer qui » ?
+
+## 5. Conventions
+
+- **Scripts `utils/`** : sans dépendance tierce (stdlib), **idempotents**,
+  `--dry-run` par défaut ou explicite puis `--commit`, DB = `ROOT/meetings.db`
+  (= `/app/meetings.db` en conteneur). Matching par **nom au sein d'un même type**
+  (un homonyme dans un autre type reste une fiche séparée).
+- **Ne jamais supprimer** un contact qui quitte ses fonctions : `in_office = 0`.
+- **Secrets** uniquement en variables d'env (`/opt/volunteer-apps/secrets/…`),
+  jamais dans le dépôt. IMAP : `IMAP_*` (citoyens), `MEMBER_IMAP_*` (membres).
+  Le pont CiviCRM n'a **aucun** secret : `cv` tourne en local dans le conteneur.
+- **Chemin de base surchargeable** : `CRM_DB_PATH` pour l'app, `IMAP_DB_PATH`
+  pour les scripts. C'est ce qui rend les tests de démarrage concurrents possibles.
+- **`init_db()` est sérialisé** par un verrou de fichier
+  (`meetings.db.migrate.lock`), parce qu'il tourne à l'import donc dans les
+  quatre workers gunicorn à la fois — c'est ce qui avait fait planter le
+  déploiement de `44b4311` en boucle. Un verrou de fichier et **non** une
+  transaction SQLite : `executescript()` valide toute transaction en cours avant
+  de s'exécuter, donc un `BEGIN IMMEDIATE` serait simplement ignoré.
+- **Tests** : `python3 -m unittest discover -s tests` (couvre le classifieur mails).
+
+## 6. Déploiement (Docker)
+
+La base **vit dans le conteneur** (`/app/meetings.db`) — ne pas la manipuler
+depuis l'hôte. Le `Dockerfile` ne copie que `app.py` + `templates/` + `static/` ;
+`utils/` et `actual_dataset/` sont injectés à l'exécution par `docker cp`.
+
+```bash
+cd /opt/volunteer-apps/apps/website-meeting
+sudo docker exec website-meeting-app sh -c 'cp /app/meetings.db /app/meetings.db.bak-$(date +%F)'
+git fetch <remote> && git checkout -f <remote>/main    # la prod suit main
+sudo docker-compose build && sudo docker-compose up -d  # init_db applique les migrations
+sudo docker logs --tail 15 website-meeting-app          # vérifier: pas de traceback
+# peuplement éventuel :
+sudo docker exec website-meeting-app rm -rf /app/utils
+sudo docker cp utils website-meeting-app:/app/utils
+sudo docker cp actual_dataset website-meeting-app:/app/actual_dataset   # si le script lit un JSON
+sudo docker exec website-meeting-app python3 /app/utils/<script>.py [--commit]
+```
+
+## 7. Où regarder en premier
+
+| Besoin | Fichier |
+|---|---|
+| Routes, schéma, migrations, constantes (`CONTACT_TYPES`…) | `app.py` |
+| Un script de peuplement / sync | `utils/` + `utils/README.md` |
+| Comment le schéma a évolué (fusion CRM) | `BACKWARD_COMPATIBILITY.md` |
+| Les pipelines mails | `AUTOMATISATION_MAILS_*.md` |
+| Le pont CiviCRM (règles, correspondances, pièges) | `AUTOMATISATION_CIVICRM.md` |
+| Ce que CiviCRM renvoie et comment on le mappe | `utils/civicrm.py` |
+| La file d'attente et la création des fiches | `utils/civicrm_lookup.py` |
+| Les domaines connus, les conventions d'adresses | `utils/maildomains.py`, `utils/mailpatterns.py` |
+| Timers / unités systemd | `utils/deploy/` |
