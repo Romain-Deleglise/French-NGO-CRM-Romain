@@ -559,6 +559,83 @@ def cmd_apply_names(db, args):
     return 0
 
 
+def cmd_report(db, args):
+    """What the last import actually produced — short enough to read.
+
+    A --backfill sweep can inspect thousands of messages, and --verbose prints a
+    line per skipped one. This shows the outcome instead: the press mail that
+    got attached, what the queue holds, and a sample of what could not be
+    attributed, so the sample is representative rather than the first N.
+    """
+    limit = args.limit
+
+    log("== Contacts ==")
+    for ctype, total, with_mail in db.execute(
+        """
+        SELECT contact_type, COUNT(*),
+               SUM(CASE WHEN COALESCE(TRIM(email), '') != '' THEN 1 ELSE 0 END)
+          FROM persons GROUP BY contact_type ORDER BY COUNT(*) DESC
+        """
+    ):
+        log(f"  {ctype:<24} {total:>5}   dont {with_mail or 0} avec adresse")
+
+    log("\n== Courriels rattachés à un·e journaliste ==")
+    rows = db.execute(
+        """
+        SELECT m.mail_date, m.direction, p.name,
+               COALESCE(o.name, '—'), COALESCE(m.subject, '(sans objet)')
+          FROM mails m
+          JOIN mail_persons mp ON mp.mail_id = m.id
+          JOIN persons p ON p.id = mp.person_id AND p.contact_type = 'Journaliste'
+          LEFT JOIN person_organisations po ON po.person_id = p.id
+          LEFT JOIN organisations o ON o.id = po.organisation_id
+                                   AND o.org_type = 'Média'
+         GROUP BY m.id
+         ORDER BY m.mail_date DESC, m.id DESC
+         LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    total_press = db.execute(
+        "SELECT COUNT(DISTINCT m.id) FROM mails m "
+        "JOIN mail_persons mp ON mp.mail_id = m.id "
+        "JOIN persons p ON p.id = mp.person_id AND p.contact_type = 'Journaliste'"
+    ).fetchone()[0]
+    if rows:
+        for date, direction, name, media, subject in rows:
+            arrow = "→" if direction == "sent" else "←"
+            log(f"  {date} {arrow} {name} ({media}) — {subject[:60]}")
+        log(f"  … {total_press} courriel(s) presse au total.")
+    else:
+        log("  aucun — soit aucun échange presse dans la boîte, soit le "
+            "rapprochement n'a rien trouvé.")
+
+    log("\n== File d'attente CiviCRM ==")
+    for status, total in db.execute(
+        "SELECT status, COUNT(*) FROM civicrm_pending GROUP BY status ORDER BY status"
+    ):
+        log(f"  {status:<10} {total}")
+
+    log("\n== Adresses non rattachées, les plus fréquentes ==")
+    # Ordered by how often each turned up: what is worth a human's attention is
+    # the address seen twenty times, not the first one alphabetically.
+    unresolved = db.execute(
+        "SELECT email, COALESCE(display, ''), seen_count, status "
+        "FROM civicrm_pending WHERE status != 'resolved' "
+        "ORDER BY seen_count DESC, first_seen LIMIT ?", (limit,)
+    ).fetchall()
+    for mail, display, seen, status in unresolved:
+        who = f" — {display}" if display else ""
+        log(f"  {seen:>3}× {mail}{who}  [{status}]")
+    if not unresolved:
+        log("  aucune.")
+
+    conventions = domain_conventions(db)
+    log(f"\n== Conventions d'adresses apprises : {len(conventions)} ==")
+    log("  (détail : --patterns --all)")
+    return 0
+
+
 def cmd_prune(db, args):
     """Drop queued addresses the filters now reject.
 
@@ -690,6 +767,10 @@ def main():
                         help="JSON written by `cv api4 Email.get` (address -> "
                              "contact), so secondary addresses resolve too")
     group.add_argument("--stats", action="store_true", help="queue counts by status")
+    group.add_argument("--report", action="store_true",
+                       help="what the last import produced: press mail attached, "
+                            "queue state, and the most frequent unresolved "
+                            "addresses")
     group.add_argument("--retry-absent", action="store_true",
                        help="put addresses CiviCRM didn't know back in the queue")
     group.add_argument("--prune", action="store_true",
@@ -714,7 +795,8 @@ def main():
     parser.add_argument("--commit", action="store_true",
                         help="write; without it nothing is saved")
     parser.add_argument("--limit", type=int, default=500,
-                        help="max addresses printed by --list-pending")
+                        help="max rows printed by --list-pending (default 500) "
+                             "or by each section of --report (use ~20 there)")
     args = parser.parse_args()
 
     db = sqlite3.connect(args.db)
@@ -725,6 +807,8 @@ def main():
             return cmd_list_pending(db, args)
         if args.stats:
             return cmd_stats(db, args)
+        if args.report:
+            return cmd_report(db, args)
         if args.retry_absent:
             return cmd_retry_absent(db, args)
         if args.prune:
