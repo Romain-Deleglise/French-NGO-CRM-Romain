@@ -200,6 +200,33 @@ def clean_email(value):
 
 NOTE_SOURCE = "Importé de CiviCRM"
 
+# Civility CiviCRM keeps inside display_name ("M. Olivier Tesquet"). Data entry,
+# not part of anyone's name, and it would make the learned address convention
+# read "M" as the first name.
+CIVILITIES = ("m", "mr", "mme", "mlle", "dr", "me", "pr")
+
+_EMAIL_SHAPED = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
+
+
+def looks_like_an_address(name):
+    """True when this "name" is really a mailbox.
+
+    A real export of 593 press contacts carried around fifteen of them —
+    debats@lefigaro.fr, standard@lepoint.fr, redaction@positivr.fr. They are
+    newsroom desks CiviCRM records as contacts; a fiche named after one would be
+    wrong twice over, since nobody is behind it and it would teach the address
+    conventions a rule drawn from a desk.
+    """
+    return bool(_EMAIL_SHAPED.match((name or "").strip()))
+
+
+def strip_civility(name):
+    """« M. Olivier Tesquet » -> « Olivier Tesquet »."""
+    tokens = (name or "").strip().split()
+    while tokens and tokens[0].rstrip(".").lower() in CIVILITIES:
+        tokens = tokens[1:]
+    return " ".join(tokens) or (name or "").strip()
+
 
 def contact_to_person(record, today):
     """Turn one CiviCRM contact into the columns of a `persons` row.
@@ -208,8 +235,8 @@ def contact_to_person(record, today):
     and `validated_by` are left out on purpose: NULL is this CRM's marker for
     "brought in by a script", which is what keeps backfills off hand-typed fiches.
     """
-    name = (record.get("display_name") or "").strip()
-    if not name:
+    name = strip_civility(record.get("display_name") or "")
+    if not name or looks_like_an_address(name):
         return None
 
     subtypes = _as_list(record.get("contact_sub_type"))

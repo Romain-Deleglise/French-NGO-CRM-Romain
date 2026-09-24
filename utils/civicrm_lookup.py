@@ -37,7 +37,8 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from civicrm import (  # noqa: E402
-    CONTACT_FIELDS, CONTACT_FIELDS_OPTIONAL, ContractError, assert_contract, clean_email,
+    CONTACT_FIELDS, CONTACT_FIELDS_OPTIONAL, ContractError, assert_contract,
+    clean_email, looks_like_an_address,
     contact_to_person, norm_name,
 )
 from import_civicrm_medias import link_person_media, load_media_index  # noqa: E402
@@ -359,11 +360,16 @@ def cmd_seed(db, args):
     media_index = load_media_index(db)
     known = existing_emails(db)
 
-    created = attached = skipped = 0
+    created = attached = skipped = desks = 0
     for record in usable:
         row = contact_to_person(record, today)
         if row is None:
-            skipped += 1
+            # Either nameless, or a newsroom desk CiviCRM records as a contact
+            # ("debats@lefigaro.fr"). Neither deserves a fiche.
+            if looks_like_an_address(record.get("display_name") or ""):
+                desks += 1
+            else:
+                skipped += 1
             continue
         if row["email"] in known:
             skipped += 1
@@ -387,7 +393,8 @@ def cmd_seed(db, args):
         db.commit()
     prefix = "" if args.commit else "[dry-run] "
     log(f"{prefix}Amorçage. Fiches créées : {created} | fiches complétées : "
-        f"{attached} | déjà connues ou sans nom : {skipped}.")
+        f"{attached} | déjà connues ou sans nom : {skipped} | adresses de "
+        f"rédaction écartées : {desks}.")
     if args.commit and (created or attached):
         log("Étape suivante — récupérer les domaines et les coller dans la règle "
             "Google Workspace :")

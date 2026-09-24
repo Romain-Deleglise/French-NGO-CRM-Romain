@@ -118,6 +118,28 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(cc.contact_to_person(rec, TODAY)["contact_type"],
                          "Journaliste")
 
+    def test_a_newsroom_desk_recorded_as_a_contact_is_dropped(self):
+        # Fifteen of these turned up in the real 593-contact export of group 12.
+        for desk in ("debats@lefigaro.fr", "standard@lepoint.fr",
+                     "redaction@positivr.fr", "contributions@huffpost.fr",
+                     "jean-marc.lalanne@inrocks.com"):
+            self.assertTrue(cc.looks_like_an_address(desk), desk)
+            self.assertIsNone(
+                cc.contact_to_person(dict(FIGARO, display_name=desk), TODAY), desk)
+
+    def test_a_real_name_is_not_mistaken_for_an_address(self):
+        for name in ("Tristan Vey", "Caroline De Malet", "Jojol", "M. Tesquet"):
+            self.assertFalse(cc.looks_like_an_address(name), name)
+
+    def test_civility_is_stripped_from_the_fiche_name(self):
+        # CiviCRM keeps "M. Olivier Tesquet" and "Mme Alexia Borg" as entered.
+        for raw, expected in (("M. Olivier Tesquet", "Olivier Tesquet"),
+                              ("Mme Alexia Borg", "Alexia Borg"),
+                              ("Dr Jean Dupont", "Jean Dupont"),
+                              ("Tristan Vey", "Tristan Vey")):
+            row = cc.contact_to_person(dict(FIGARO, display_name=raw), TODAY)
+            self.assertEqual(row["name"], expected)
+
     def test_nameless_record_is_dropped(self):
         self.assertIsNone(cc.contact_to_person(dict(FIGARO, display_name="  "),
                                                TODAY))

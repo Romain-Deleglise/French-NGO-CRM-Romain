@@ -30,6 +30,16 @@ class SplitNameTests(unittest.TestCase):
     def test_a_compound_surname_is_joined(self):
         self.assertEqual(mp.split_name("Caroline De Malet"), ("caroline", "demalet"))
 
+    def test_civility_is_not_read_as_a_first_name(self):
+        # Without this, "M. Olivier Tesquet" teaches the domain that its
+        # convention builds on the first name "m".
+        self.assertEqual(mp.split_name("M. Olivier Tesquet"),
+                         ("olivier", "tesquet"))
+        self.assertEqual(mp.split_name("Mme Alexia Borg"), ("alexia", "borg"))
+
+    def test_a_civility_only_name_gives_nothing(self):
+        self.assertIsNone(mp.split_name("Mme"))
+
     def test_a_mononym_gives_nothing_to_build_on(self):
         for value in ("Jojol", "", None, "   "):
             self.assertIsNone(mp.split_name(value))

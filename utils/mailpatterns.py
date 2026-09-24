@@ -34,6 +34,9 @@ MIN_EXAMPLES = 2
 # "demalet" and "Le Proktor" into "leproktor", but almost never keep the space.
 PARTICLES = ("de", "du", "des", "le", "la", "les", "van", "von", "di", "da")
 
+# Dropped before reading a name — see split_name.
+CIVILITIES = ("m", "mr", "mme", "mlle", "dr", "me", "pr")
+
 
 def canon(text):
     """Accent-free, lower-case, letters only — the form newsrooms build on."""
@@ -50,6 +53,10 @@ def split_name(display_name):
     a template from, so it is skipped rather than guessed at.
     """
     tokens = [t for t in re.split(r"[\s\-_.]+", (display_name or "").strip()) if t]
+    # "M. Olivier Tesquet": the civility is data entry, and reading "M" as the
+    # first name would teach a wrong convention for the whole domain.
+    while tokens and canon(tokens[0]) in CIVILITIES:
+        tokens = tokens[1:]
     if len(tokens) < 2:
         return None
     prenom = canon(tokens[0])
