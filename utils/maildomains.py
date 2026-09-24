@@ -1,4 +1,4 @@
-"""Which e-mail domains belong to an organisation we follow — read from the data.
+r"""Which e-mail domains belong to an organisation we follow — read from the data.
 
 The mail importers used to carry three domains in the source:
 
