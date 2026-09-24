@@ -165,6 +165,32 @@ class GenericAddressTests(unittest.TestCase):
                      "bonjour@fresquedesrisquesdelia.org"):
             self.assertTrue(cl.is_generic(addr), addr)
 
+    def test_the_robots_the_first_backfill_let_through(self):
+        # Straight off the 2 079-message sweep: both were queued a dozen times
+        # each before the filters grew to cover them.
+        self.assertTrue(cl.is_generic("drive-shares-dm-noreply@google.com"))
+        self.assertTrue(cl.is_generic("laredoute@news.laredoute.fr"))
+
+    def test_a_robot_fragment_anywhere_in_the_local_part_counts(self):
+        for addr in ("bounce-123@x.fr", "list-unsubscribe@y.org",
+                     "auto-notification-42@z.com"):
+            self.assertTrue(cl.is_generic(addr), addr)
+
+    def test_a_sending_subdomain_is_bulk(self):
+        for addr in ("x@news.leparisien.fr", "y@email.airbnb.com",
+                     "z@mailing.example.org"):
+            self.assertTrue(cl.is_generic(addr), addr)
+
+    def test_a_journalist_on_a_plain_domain_still_passes(self):
+        # The filters must not swallow the people this exists for.
+        for addr in ("tvey@lefigaro.fr", "jboone@lesechos.fr",
+                     "mtual@lemonde.fr", "a.grimonpont@leparisien.fr"):
+            self.assertFalse(cl.is_generic(addr), addr)
+
+    def test_a_two_label_domain_is_never_bulk_by_its_name(self):
+        # "news.fr" would be a média, not a sending platform.
+        self.assertFalse(cl.is_generic("redacteur@news.fr"))
+
     def test_our_own_domains_are_not_contacts(self):
         # The Fresque site is ours; a mail from it is internal, not a lead.
         self.assertTrue(cl.is_generic("quelquun@fresquedesrisquesdelia.org"))

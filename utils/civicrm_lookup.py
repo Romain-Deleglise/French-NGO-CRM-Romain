@@ -67,6 +67,25 @@ GENERIC_LOCALPARTS = {
     "facture", "facturation", "invoice", "receipt", "confirmation",
 }
 
+# Substrings that make a local part a robot wherever they sit inside it.
+# GENERIC_LOCALPARTS matches the whole local part, which let
+# `drive-shares-dm-noreply@google.com` through twenty times.
+ROBOT_FRAGMENTS = (
+    "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
+    "nepasrepondre", "ne-pas-repondre", "mailer-daemon", "bounce",
+    "notification", "unsubscribe", "desabonnement",
+)
+
+# Subdomains email service providers send bulk from. A person's address almost
+# never sits on one; a newsletter's very often does —
+# `laredoute@news.laredoute.fr` is what prompted this.
+BULK_SUBDOMAINS = (
+    "news", "newsletter", "newsletters", "mailing", "mailings", "emailing",
+    "email", "emails", "mail", "envoi", "envois", "bounce", "bounces",
+    "noreply", "no-reply", "reply", "notifications", "notify", "alerts",
+    "marketing", "campaign", "campaigns", "sendgrid", "mailgun", "mandrill",
+)
+
 # Our own properties. A mail to or from one of these is internal — the Fresque
 # site, the association's own domains — never a contact to file. pauseia.fr is
 # already excluded as the members' domain; this covers the rest. Comma-separated
@@ -143,7 +162,14 @@ def is_generic(address):
     # subdomain of the service as often as on its apex.
     if any(domain == d or domain.endswith("." + d) for d in OWN_DOMAINS):
         return True
-    return local in GENERIC_LOCALPARTS
+    if local in GENERIC_LOCALPARTS:
+        return True
+    if any(fragment in local for fragment in ROBOT_FRAGMENTS):
+        return True
+    # news.laredoute.fr, email.airbnb.com…: the first label of a multi-part
+    # domain naming a sending platform rather than an organisation.
+    labels = domain.split(".")
+    return len(labels) > 2 and labels[0] in BULK_SUBDOMAINS
 
 
 def is_bulk(msg):
