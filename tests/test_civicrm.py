@@ -1,0 +1,258 @@
+"""Cover the CiviCRM bridge: the contract, the value mapping, and the queue.
+
+The mapping is the part a CiviCRM upgrade can silently break, so the contract
+test here is the same guard the scripts rely on at runtime.
+"""
+import os
+import sqlite3
+import sys
+import unittest
+from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "utils"))
+
+import civicrm as cc  # noqa: E402
+import civicrm_lookup as cl  # noqa: E402
+from import_civicrm_medias import load_media_index, upsert_media  # noqa: E402
+
+NOW = datetime.now(timezone.utc).isoformat(timespec="seconds")
+TODAY = NOW[:10]
+
+# A record shaped exactly as `cv api4 Contact.get` returns one, taken from the
+# real export (Le Figaro's newsroom uses <initial><surname>@lefigaro.fr).
+FIGARO = {
+    "id": 792,
+    "display_name": "Tristan Vey",
+    "contact_sub_type": ["Journaliste"],
+    "email_primary.email": "tvey@lefigaro.fr",
+    "employer_id.display_name": "LE FIGARO",
+    "Analyse_strat_gique_Pause_IA.Alignement": "2",
+    "Analyse_strat_gique_Pause_IA.Niveau_d_influence": "3",
+    "Description_courte.Description_courte": "Sciences et technologies.",
+    "Compte_R_seaux_Sociaux.Twitter": "https://x.com/TristanVey",
+    "Compte_R_seaux_Sociaux.LinkedIn": "",
+}
+
+
+class ContractTests(unittest.TestCase):
+    def test_complete_export_passes(self):
+        cc.assert_contract([FIGARO], cc.CONTACT_FIELDS)
+
+    def test_empty_export_is_legitimate(self):
+        cc.assert_contract([], cc.CONTACT_FIELDS)
+
+    def test_renamed_custom_field_is_caught(self):
+        broken = dict(FIGARO)
+        del broken["Analyse_strat_gique_Pause_IA.Alignement"]
+        with self.assertRaises(cc.ContractError) as ctx:
+            cc.assert_contract([broken], cc.CONTACT_FIELDS)
+        self.assertIn("Alignement", str(ctx.exception))
+
+    def test_non_list_is_caught(self):
+        with self.assertRaises(cc.ContractError):
+            cc.assert_contract({"id": 1}, cc.CONTACT_FIELDS)
+
+
+class MappingTests(unittest.TestCase):
+    def test_journalist_maps_whole_record(self):
+        row = cc.contact_to_person(FIGARO, TODAY)
+        self.assertEqual(row["name"], "Tristan Vey")
+        self.assertEqual(row["contact_type"], "Journaliste")
+        self.assertEqual(row["stance"], "Plutôt favorable")   # Alignement "2"
+        self.assertEqual(row["email"], "tvey@lefigaro.fr")
+        self.assertEqual(row["media_name"], "LE FIGARO")
+        self.assertEqual(row["social_links"], "https://x.com/TristanVey")
+        self.assertIn("Sciences et technologies.", row["notes"])
+        self.assertIn("Élevé", row["notes"])                  # Niveau d'influence "3"
+
+    def test_alignement_is_read_by_value_not_label(self):
+        for value, stance in (("1", "Neutre / indécis"), ("3", "Favorable"),
+                              ("4", "Opposé"), ("5", "Inconnu")):
+            rec = dict(FIGARO, **{"Analyse_strat_gique_Pause_IA.Alignement": value})
+            self.assertEqual(cc.contact_to_person(rec, TODAY)["stance"], stance)
+
+    def test_missing_alignement_is_unknown(self):
+        rec = dict(FIGARO, **{"Analyse_strat_gique_Pause_IA.Alignement": None})
+        self.assertEqual(cc.contact_to_person(rec, TODAY)["stance"], "Inconnu")
+
+    def test_unmapped_subtype_keeps_its_origin_in_the_notes(self):
+        rec = dict(FIGARO, contact_sub_type=["Influenceur"])
+        row = cc.contact_to_person(rec, TODAY)
+        self.assertEqual(row["contact_type"], "Autre")
+        self.assertIn("Influenceur", row["notes"])
+
+    def test_multivalued_subtype_prefers_the_mapped_one(self):
+        rec = dict(FIGARO, contact_sub_type=["B_n_vole", "Journaliste"])
+        self.assertEqual(cc.contact_to_person(rec, TODAY)["contact_type"],
+                         "Journaliste")
+
+    def test_nameless_record_is_dropped(self):
+        self.assertIsNone(cc.contact_to_person(dict(FIGARO, display_name="  "),
+                                               TODAY))
+
+    def test_media_name_folding_matches_across_case_and_accents(self):
+        self.assertEqual(cc.norm_name("LE FIGARO"), cc.norm_name("Le Figaro"))
+        self.assertEqual(cc.norm_name("Médiapart"), cc.norm_name("MEDIAPART"))
+        self.assertNotEqual(cc.norm_name("LE FIGARO"),
+                            cc.norm_name("LE FIGARO ECONOMIE"))
+
+
+class GenericAddressTests(unittest.TestCase):
+    def test_newsroom_desks_are_not_worth_a_fiche(self):
+        for addr in ("redaction@lemonde.fr", "contact@lefigaro.fr",
+                     "no-reply@lemonde.fr", "presse@ngo.org"):
+            self.assertTrue(cl.is_generic(addr), addr)
+
+    def test_a_person_is(self):
+        for addr in ("tvey@lefigaro.fr", "sylvain.rolland@latribune.fr"):
+            self.assertFalse(cl.is_generic(addr), addr)
+
+
+class QueueAndApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(
+            """
+            CREATE TABLE persons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, contact_type TEXT NOT NULL,
+                stance TEXT NOT NULL, email TEXT, social_links TEXT, notes TEXT,
+                added_by INTEGER, validated_by INTEGER, created_at TEXT NOT NULL
+            );
+            CREATE TABLE organisations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, org_type TEXT NOT NULL, stance TEXT NOT NULL,
+                notes TEXT, created_at TEXT NOT NULL
+            );
+            CREATE TABLE person_organisations (
+                person_id INTEGER NOT NULL, organisation_id INTEGER NOT NULL,
+                PRIMARY KEY (person_id, organisation_id)
+            );
+            """
+        )
+        cl.ensure_civicrm_tables(self.db)
+
+    def tearDown(self):
+        self.db.close()
+
+    def _pending(self, email):
+        return self.db.execute(
+            "SELECT status, person_id FROM civicrm_pending WHERE email = ?",
+            (email,)).fetchone()
+
+    def test_enqueue_is_idempotent_and_counts_sightings(self):
+        self.assertTrue(cl.enqueue(self.db, "tvey@lefigaro.fr", "Tristan Vey", NOW))
+        self.assertFalse(cl.enqueue(self.db, "TVEY@lefigaro.fr", "", NOW))
+        count, = self.db.execute(
+            "SELECT seen_count FROM civicrm_pending WHERE email = ?",
+            ("tvey@lefigaro.fr",)).fetchone()
+        self.assertEqual(count, 2)
+
+    def test_generic_addresses_never_enter_the_queue(self):
+        self.assertFalse(cl.enqueue(self.db, "redaction@lemonde.fr", "", NOW))
+        self.assertIsNone(self._pending("redaction@lemonde.fr"))
+
+    def test_apply_creates_the_fiche_and_links_the_media(self):
+        cl.enqueue(self.db, "tvey@lefigaro.fr", "Tristan Vey", NOW)
+        person_id, action = cl.create_or_attach(
+            self.db, cc.contact_to_person(FIGARO, TODAY), NOW,
+            cl.load_person_index(self.db), load_media_index(self.db))
+        self.assertEqual(action, "created")
+        name, ctype, mail = self.db.execute(
+            "SELECT name, contact_type, email FROM persons WHERE id = ?",
+            (person_id,)).fetchone()
+        self.assertEqual((name, ctype, mail),
+                         ("Tristan Vey", "Journaliste", "tvey@lefigaro.fr"))
+        org, = self.db.execute(
+            "SELECT o.name FROM organisations o "
+            "JOIN person_organisations po ON po.organisation_id = o.id "
+            "WHERE po.person_id = ?", (person_id,)).fetchone()
+        self.assertEqual(org, "LE FIGARO")
+
+    def test_existing_seeded_fiche_gains_the_address_instead_of_a_duplicate(self):
+        # One of the 133 journalists seeded from the old press CRM: a name, no mail.
+        self.db.execute(
+            "INSERT INTO persons (name, contact_type, stance, created_at) "
+            "VALUES ('Tristan Vey', 'Journaliste', 'Inconnu', ?)", (NOW,))
+        person_id, action = cl.create_or_attach(
+            self.db, cc.contact_to_person(FIGARO, TODAY), NOW,
+            cl.load_person_index(self.db), load_media_index(self.db))
+        self.assertEqual(action, "attached")
+        total, = self.db.execute(
+            "SELECT COUNT(*) FROM persons WHERE name = 'Tristan Vey'").fetchone()
+        self.assertEqual(total, 1)
+        mail, = self.db.execute(
+            "SELECT email FROM persons WHERE id = ?", (person_id,)).fetchone()
+        self.assertEqual(mail, "tvey@lefigaro.fr")
+
+    def test_attaching_fills_the_blanks_of_a_seeded_fiche(self):
+        self.db.execute(
+            "INSERT INTO persons (name, contact_type, stance, created_at) "
+            "VALUES ('Tristan Vey', 'Journaliste', 'Inconnu', ?)", (NOW,))
+        cl.create_or_attach(self.db, cc.contact_to_person(FIGARO, TODAY), NOW,
+                            cl.load_person_index(self.db), load_media_index(self.db))
+        stance, social, notes = self.db.execute(
+            "SELECT stance, social_links, notes FROM persons "
+            "WHERE name = 'Tristan Vey'").fetchone()
+        self.assertEqual(stance, "Plutôt favorable")
+        self.assertEqual(social, "https://x.com/TristanVey")
+        self.assertIn("CiviCRM", notes)
+
+    def test_attaching_never_overwrites_what_a_moderator_typed(self):
+        self.db.execute(
+            "INSERT INTO persons (name, contact_type, stance, social_links, notes, "
+            "created_at) VALUES ('Tristan Vey', 'Journaliste', 'Opposé', "
+            "'https://perso.fr', 'Rencontré en mars.', ?)", (NOW,))
+        cl.create_or_attach(self.db, cc.contact_to_person(FIGARO, TODAY), NOW,
+                            cl.load_person_index(self.db), load_media_index(self.db))
+        stance, social, notes, mail = self.db.execute(
+            "SELECT stance, social_links, notes, email FROM persons "
+            "WHERE name = 'Tristan Vey'").fetchone()
+        self.assertEqual(stance, "Opposé")            # their judgement wins
+        self.assertEqual(social, "https://perso.fr")
+        self.assertEqual(notes, "Rencontré en mars.")
+        self.assertEqual(mail, "tvey@lefigaro.fr")    # but the blank is filled
+
+    def test_a_hand_typed_address_is_never_overwritten(self):
+        self.db.execute(
+            "INSERT INTO persons (name, contact_type, stance, email, created_at) "
+            "VALUES ('Tristan Vey', 'Journaliste', 'Favorable', 'perso@vey.fr', ?)",
+            (NOW,))
+        cl.create_or_attach(self.db, cc.contact_to_person(FIGARO, TODAY), NOW,
+                            cl.load_person_index(self.db), load_media_index(self.db))
+        mail, = self.db.execute(
+            "SELECT email FROM persons WHERE name = 'Tristan Vey'").fetchone()
+        self.assertEqual(mail, "perso@vey.fr")
+
+    def test_the_same_media_is_not_created_twice_across_case(self):
+        self.db.execute(
+            "INSERT INTO organisations (name, org_type, stance, created_at) "
+            "VALUES ('Le Figaro', 'Média', 'Inconnu', ?)", (NOW,))
+        index = load_media_index(self.db)
+        org_id, created = upsert_media(self.db, "LE FIGARO", NOW, index)
+        self.assertFalse(created)
+        total, = self.db.execute(
+            "SELECT COUNT(*) FROM organisations WHERE org_type = 'Média'").fetchone()
+        self.assertEqual(total, 1)
+        self.assertIsNotNone(org_id)
+
+    def test_a_homonym_in_another_type_stays_a_separate_fiche(self):
+        # "Laurent Alexandre" is both an LFI député and a chroniqueur.
+        self.db.execute(
+            "INSERT INTO persons (name, contact_type, stance, created_at) "
+            "VALUES ('Laurent Alexandre', 'Politique', 'Inconnu', ?)", (NOW,))
+        rec = dict(FIGARO, display_name="Laurent Alexandre",
+                   **{"email_primary.email": "lalexandre@lexpress.fr"})
+        _pid, action = cl.create_or_attach(
+            self.db, cc.contact_to_person(rec, TODAY), NOW,
+            cl.load_person_index(self.db), load_media_index(self.db))
+        self.assertEqual(action, "created")
+        total, = self.db.execute(
+            "SELECT COUNT(*) FROM persons WHERE name = 'Laurent Alexandre'"
+        ).fetchone()
+        self.assertEqual(total, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

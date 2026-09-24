@@ -493,3 +493,17 @@ sudo journalctl -u import-campaign-mails.service -n 50   # see its output
 > A plain **cron** line works too if you prefer:
 > `0 6 * * * docker exec --env-file /opt/volunteer-apps/secrets/website-meeting.env
 > website-meeting-app python3 /app/utils/import_campaign_mails.py >> /var/log/import_campaign_mails.log 2>&1`
+
+## Pont CiviCRM (voir `AUTOMATISATION_CIVICRM.md`)
+
+CiviCRM porte ~12 900 journalistes avec leur adresse et leur média. On ne les
+recopie pas : une fiche est créée le jour où un membre échange avec la personne.
+Les scripts ci-dessous ne parlent jamais à CiviCRM — ils lisent le JSON que `cv`
+a écrit, en lecture seule, orchestrés par `deploy/civicrm-sync.sh` sur l'hôte.
+
+| Script | Rôle |
+|---|---|
+| `civicrm.py` | Correspondance CiviCRM → CRM et **test de contrat**. Le seul fichier qu'une mise à jour de CiviCRM peut casser. |
+| `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs). |
+| `civicrm_lookup.py` | File d'attente `civicrm_pending` : `--list-pending`, `--apply`, `--stats`, `--retry-absent`. |
+| `deploy/civicrm-sync.sh` | Orchestration hôte : `cv` → `docker cp` → scripts. À planifier vers 06:30, après l'import des mails de membres. |

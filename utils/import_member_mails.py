@@ -53,6 +53,9 @@ from import_campaign_mails import (  # noqa: E402
     get_last_uid, set_last_uid, load_email_index, already_imported, fetch_uids,
     mail_date_iso, log,
 )
+# CiviCRM holds ~12 900 journalists this CRM does not. An address we cannot match
+# is queued here rather than dropped, and civicrm_lookup.py turns it into a fiche.
+from civicrm_lookup import enqueue, ensure_civicrm_tables  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.environ.get("IMAP_DB_PATH", os.path.join(ROOT, "meetings.db"))
@@ -410,6 +413,35 @@ def classify(msg, db, email_index, name_patterns=None):
     return None, [], None, None, False
 
 
+def queue_unknown_counterparts(db, msg, now):
+    """Queue the outside address of a member mail we failed to match.
+
+    Only mails with a member on exactly one side are of interest: those are
+    someone from PauseIA writing to, or hearing from, a person we have no fiche
+    for. Anything else (newsletters, member-to-member, robots) is left alone.
+    Returns the number of addresses newly queued.
+    """
+    from_pairs = addr_pairs(msg, "From")
+    to_pairs = addr_pairs(msg, "To", "Cc")
+    from_member = [p for p in from_pairs if is_member(p[1])]
+    to_member = [p for p in to_pairs if is_member(p[1])]
+
+    if from_member and not to_member:
+        candidates = to_pairs      # a member wrote to someone unknown
+    elif to_member and not from_member:
+        candidates = from_pairs    # someone unknown wrote to a member
+    else:
+        return 0
+
+    queued = 0
+    for display, address in candidates:
+        if is_member(address) or is_official(address):
+            continue
+        if enqueue(db, address, display, now):
+            queued += 1
+    return queued
+
+
 def record(db, msg, direction, matches, member, learn, low_confidence,
            dry_run, auto_publish):
     message_id = (msg.get("Message-ID") or "").strip()
@@ -530,6 +562,7 @@ def main():
     if not args.dry_run:
         ensure_state_table(db)
         ensure_member_tables(db)
+        ensure_civicrm_tables(db)
     # Aliases read is tolerant of the table not existing yet (e.g. dry-run first run).
     email_index = load_email_index_with_aliases(db)
     name_patterns = build_name_pattern_index(db)
@@ -541,8 +574,9 @@ def main():
         last_uid = get_last_uid(db, "members")
         uids = fetch_uids(conn, mailbox, last_uid, args.backfill)
         log(f"Audit mailbox {mailbox!r}: {len(uids)} message(s) to inspect.")
-        imported = dup = skipped = max_uid = 0
+        imported = dup = skipped = queued = max_uid = 0
         max_uid = last_uid
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         for uid in uids:
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
             if status == "OK" and data and data[0]:
@@ -559,6 +593,8 @@ def main():
                         imported += 1
                     else:
                         skipped += 1
+                        if not args.dry_run:
+                            queued += queue_unknown_counterparts(db, msg, now)
                         if args.verbose:
                             log(f"  [skip] {decoded(msg.get('Subject'))!r}")
             max_uid = max(max_uid, uid)
@@ -568,8 +604,8 @@ def main():
             db.commit()
         verb = "published" if auto_publish else "staged"
         log(f"Done. Mails {verb}: {imported} | already-imported skipped: {dup} | "
-            f"not member↔élu: {skipped} | last UID now: "
-            f"{max_uid if not args.dry_run else last_uid}.")
+            f"not member↔élu: {skipped} | queued for CiviCRM: {queued} | "
+            f"last UID now: {max_uid if not args.dry_run else last_uid}.")
     finally:
         try:
             conn.logout()
