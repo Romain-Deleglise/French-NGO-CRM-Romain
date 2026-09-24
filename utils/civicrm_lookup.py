@@ -446,12 +446,26 @@ def domain_conventions(db):
 
 
 def cmd_patterns(db, args):
-    """Print the conventions needed for the addresses still waiting.
+    """Print the address conventions learned from the fiches.
 
-    The host feeds the média names back into `cv api4 Contact.get` to fetch
-    those journalists by name — see utils/deploy/civicrm-sync.sh.
+    By default, only those needed for the addresses still waiting — that is
+    what civicrm-sync.sh feeds back into `cv api4 Contact.get` to fetch those
+    journalists by name. With --all, every convention, which is what you want
+    when reviewing a seed: an empty queue would otherwise print `{}` and hide
+    the forty-odd conventions that were in fact learned.
     """
     conventions = domain_conventions(db)
+    if args.all:
+        print(json.dumps(conventions, ensure_ascii=False, indent=2,
+                         sort_keys=True))
+        by_template = {}
+        for entry in conventions.values():
+            by_template[entry["template"]] = by_template.get(entry["template"], 0) + 1
+        log(f"{len(conventions)} convention(s) apprise(s) : "
+            + ", ".join(f"{n}× {t}" for t, n in
+                        sorted(by_template.items(), key=lambda kv: -kv[1])))
+        return 0
+
     wanted = {}
     for (address,) in db.execute(
         "SELECT email FROM civicrm_pending WHERE status IN ('pending', 'absent')"
@@ -460,8 +474,9 @@ def cmd_patterns(db, args):
         if domain in conventions:
             wanted[domain] = conventions[domain]
     print(json.dumps(wanted, ensure_ascii=False, indent=2))
-    log(f"{len(wanted)} domaine(s) avec une convention connue, sur "
-        f"{len(conventions)} apprise(s).", )
+    log(f"{len(wanted)} domaine(s) utile(s) aux adresses en attente, sur "
+        f"{len(conventions)} convention(s) apprise(s). "
+        f"Utilisez --patterns --all pour les voir toutes.")
     return 0
 
 
@@ -685,6 +700,9 @@ def main():
     group.add_argument("--seed", metavar="FILE",
                        help="create fiches for a whole CiviCRM group, to get the "
                             "cycle started (keep it narrow — see SEED_SOFT_CAP)")
+    parser.add_argument("--all", action="store_true",
+                        help="--patterns: show every learned convention, not "
+                             "only those the queue needs")
     parser.add_argument("--force", action="store_true",
                         help="--seed: accept an export past the soft cap")
     parser.add_argument("--verbose", action="store_true",
