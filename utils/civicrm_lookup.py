@@ -327,12 +327,15 @@ SEED_SOFT_CAP = 1500
 def cmd_seed(db, args):
     """Create fiches for a whole CiviCRM group, to get the cycle started.
 
-    The chicken and egg: the Google Workspace rule only copies mail touching a
-    parliamentary domain, so no press exchange ever reaches the audit mailbox,
-    so no press address is ever queued, so no journalist fiche exists, so
-    `maildomains --google-rule` still prints three domains. Seeding one narrow
-    group breaks that — their médias' domains appear at once and can be pasted
-    into the Workspace rule, after which the on-demand path takes over.
+    The on-demand path needs something to start from. An address arriving in the
+    audit mailbox is only resolvable against fiches that exist, and a média's
+    address convention is only learnable from addresses already held — so with
+    an empty press half, every journalist mail is queued and none is ever
+    attributed. Seeding one narrow group breaks that.
+
+    (It is NOT needed to make Workspace copy press mail: the rule matching
+    `@pauseia.fr` over full headers already copies the whole correspondence. An
+    earlier version of this docstring said otherwise.)
 
     Narrow is the point. This is not the bulk import we deliberately did not do.
     """
@@ -401,9 +404,9 @@ def cmd_seed(db, args):
         f"{attached} | déjà connues ou sans nom : {skipped} | adresses de "
         f"rédaction écartées : {desks}.")
     if args.commit and (created or attached):
-        log("Étape suivante — récupérer les domaines et les coller dans la règle "
-            "Google Workspace :")
-        log("  python3 utils/maildomains.py --google-rule")
+        log("Les domaines désormais reconnus (scan du corps des mails, mise en "
+            "file) :")
+        log("  python3 utils/maildomains.py --list")
     return 0
 
 

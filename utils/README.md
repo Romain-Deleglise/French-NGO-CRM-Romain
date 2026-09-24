@@ -506,10 +506,11 @@ a écrit, en lecture seule, orchestrés depuis l'hôte.
 | `civicrm.py` | Correspondance CiviCRM → CRM et **test de contrat**. Le seul fichier qu'une mise à jour de CiviCRM peut casser. |
 | `civicrm_lookup.py` | File d'attente `civicrm_pending` et création des fiches : `--list-pending`, `--apply`, `--seed`, `--patterns`, `--apply-names`, `--prune`, `--retry-absent`, `--stats`. |
 | `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs de personnes). |
-| `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. `--list`, `--google-rule` (à coller dans la règle Workspace). |
+| `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. Servent au scan du corps des mails et à savoir si une adresse est déjà connue — rien à reporter dans Workspace. |
 | `mailpatterns.py` | La convention d'adresses de chaque média, apprise sur les adresses connues. Sert à **reconnaître** une adresse, jamais à en construire une pour y écrire. |
-| `deploy/civicrm-seed.sh` | Amorçage, une fois : crée les fiches d'un groupe presse restreint, puis affiche les domaines à coller dans la règle Google Workspace. |
+| `deploy/civicrm-seed.sh` | Amorçage, une fois : crée les fiches d'un groupe presse restreint, sans quoi aucune adresse de presse n'est rattachable ni aucune convention apprenable. |
 | `deploy/civicrm-sync.sh` | Le cycle quotidien : `cv` → `docker cp` → scripts. Planifié à 06:30 par `civicrm-sync.timer`, après l'import des mails de membres de 06:10. |
 
-Ordre de mise en route : `civicrm-seed.sh --commit`, coller les domaines dans la
-règle Google Workspace, puis activer `civicrm-sync.timer`.
+Ordre de mise en route : `civicrm-seed.sh --commit`, puis activer
+`civicrm-sync.timer`. Rien à faire côté Google Workspace — sa règle copie déjà
+toute la correspondance de l'association.

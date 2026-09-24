@@ -260,21 +260,23 @@ docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule
 docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule --exclude-seed
 ```
 
-**À relancer après chaque vague d'import CiviCRM** : de nouveaux médias
-apparaissent, et un domaine absent de la règle Google ne produit aucun mail dans
-la boîte d'audit — donc aucun rapprochement possible, quelle que soit la qualité
-du code ici.
+**La règle réelle de PauseIA ne liste aucun domaine.** Vérifié dans la console
+le 24/09/2026 : une seule expression, `Location: Full headers` /
+`Matches regex: @pauseia\.fr`, en Inbound et Outbound, livrée à
+`suivi-membres@pauseia.fr`. Elle copie donc **toute** la correspondance externe
+de l'association, presse comprise, et ce depuis toujours.
 
-**Deux règles plutôt qu'une**, et `--exclude-seed` sert à ça : une pour les
-élu·es (les trois domaines parlementaires), une pour la presse (les autres).
-Leurs ensembles de domaines étant **disjoints**, aucun message ne coche les deux
-et rien n'est copié en double. L'intérêt est ailleurs : on peut couper ou
-restreindre la capture presse — par exemple à `presse@pauseia.fr` plutôt qu'à
-tout `@pauseia.fr` — sans toucher à celle des élu·es.
+Conséquences, dans les deux sens :
 
-**Les deux règles doivent router vers la même boîte d'audit.** L'import ne lit
-qu'une boîte (`MEMBER_IMAP_USER`) ; deux destinations demanderaient une seconde
-configuration IMAP et une passe d'import séparée.
+- **Rien à faire dans Workspace** pour suivre la presse. Ce document a
+  longtemps dit le contraire, et `--google-rule` existait pour ça ; l'option
+  reste utile seulement pour une installation dont la règle énumère des
+  domaines.
+- **La capture est large**, et l'équipe devrait le savoir : le mail personnel
+  d'un membre vers un ami journaliste est copié comme le reste, et le corps des
+  mails membres est stocké (`mail_bodies`). Si ce périmètre pose question, c'est
+  la règle Workspace qu'il faut restreindre — par exemple à `presse@pauseia.fr`
+  — pas le code d'ici.
 
 ---
 

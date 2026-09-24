@@ -25,7 +25,14 @@ tells us nothing about who a *new* gmail address belongs to. On a freemail domai
 only the full address identifies a person, never the domain.
 
     python3 utils/maildomains.py --list        # the domains, one per line
-    python3 utils/maildomains.py --google-rule # ready to paste into Workspace
+    python3 utils/maildomains.py --google-rule # the same, on one line
+
+NB: the Workspace rule that feeds the audit mailbox matches `@pauseia\.fr`
+over the full headers, so it already copies the association's whole
+correspondence — this list is NOT needed to capture press mail. An earlier
+version of these docs said the rule enumerated domains and had to be widened
+for the press; it does not. --google-rule stays for an installation whose
+rule does work that way.
 """
 import argparse
 import os
@@ -154,8 +161,9 @@ def main():
     group.add_argument("--list", action="store_true",
                        help="print the known domains, one per line")
     group.add_argument("--google-rule", action="store_true",
-                       help="print them as one line, to paste into the Workspace "
-                            "content-compliance rule")
+                       help="print them as one line — only useful where the "
+                            "Workspace rule enumerates domains; PauseIA's matches "
+                            "@pauseia.fr and needs no list")
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--min-persons", type=int, default=MIN_PERSONS_PER_DOMAIN,
                         help="how many known people a domain needs to count")

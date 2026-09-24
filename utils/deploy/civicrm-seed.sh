@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Seed the CRM with one narrow CiviCRM group, once, to get the cycle started.
 #
-# The chicken and egg this breaks: the Google Workspace rule only copies mail
-# touching a parliamentary domain, so no press exchange reaches the audit
-# mailbox, so no press address is ever queued, so no journalist fiche exists —
-# and `maildomains.py --google-rule` still prints three domains. Seeding one
-# group puts real journalists in the CRM with their médias, their domains appear
-# in that command's output, you paste them into the Workspace rule, and from
-# then on civicrm-sync.sh resolves the rest on demand.
+# What it breaks: the on-demand path can only resolve an address against fiches
+# that exist, and can only learn a média's address convention from addresses
+# already held. With an empty press half every journalist mail is queued and
+# none is attributed. Seeding one group puts real journalists in the CRM with
+# their médias, and civicrm-sync.sh resolves the rest on demand from there.
+#
+# NB: this is not about Workspace. The rule feeding the audit mailbox matches
+# `@pauseia\.fr` over full headers, so press mail has always been copied there.
 #
 # Deliberately NOT the bulk import: group 12 (Presse - Nationale) alone, not the
 # 12 900 journalists, which would make the rencontre and courriel pickers
@@ -58,15 +59,15 @@ docker cp "$WORK/civi-seed.json" "$CRM_CONTAINER:/tmp/civi-seed.json"
 docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py \
   --seed /tmp/civi-seed.json --verbose $COMMIT
 
-say "3/3  The domains to paste into the Google Workspace rule"
+say "3/3  The domains the CRM now recognises"
 if [ -n "$COMMIT" ]; then
-  docker exec "$CRM_CONTAINER" python3 /app/utils/maildomains.py --google-rule
+  docker exec "$CRM_CONTAINER" python3 /app/utils/maildomains.py --list
   echo
-  echo "   ^ copy that line into the « Conformité du contenu » rule that feeds"
-  echo "     the audit mailbox. Until a domain is in there, Google copies none"
-  echo "     of its mail and nothing downstream can match it."
+  echo "   ^ these are used to spot a quoted address in a mail body and to"
+  echo "     decide whether an address is already known. Nothing to paste into"
+  echo "     Workspace: its rule matches @pauseia.fr and copies everything."
 else
-  echo "   (dry-run : rien n'a été créé, donc rien de nouveau à coller)"
+  echo "   (dry-run : rien n'a été créé, donc rien de nouveau à lister)"
 fi
 
 say "Terminé."

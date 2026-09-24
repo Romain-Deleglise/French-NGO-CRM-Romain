@@ -152,12 +152,14 @@ Le peuplement/intégration ci-dessus est **partiel**. Chantiers ouverts :
   article à **la bonne fiche journaliste** — les signatures sont incohérentes,
   souvent absentes — et de qualifier la position vis-à-vis de l'IA, qui est un
   jugement, pas une extraction.
-- **La règle Google Workspace est hors dépôt, et c'est le maillon qu'on oublie.**
-  Elle ne copie dans la boîte d'audit que les mails touchant un domaine qu'elle
-  connaît. Tant qu'un domaine de média n'y est pas, Google ne copie **aucun** de
-  ses mails et rien en aval ne peut le rapprocher, quelle que soit la qualité du
-  code ici. `maildomains.py --google-rule` sort la ligne à coller ; **à relancer
-  après chaque vague d'import CiviCRM**.
+- **La règle Google Workspace ne filtre rien** — et il faut le savoir dans les
+  deux sens. Son expression est une seule regex sur les en-têtes complets,
+  `@pauseia\.fr`, en entrant et en sortant : elle copie donc **toute** la
+  correspondance externe de l'association dans `suivi-membres@pauseia.fr`, y
+  compris les mails personnels d'un membre. Rien n'est à changer côté Workspace
+  pour suivre la presse — ça arrivait déjà. En revanche l'ampleur de la capture
+  mérite d'être connue de l'équipe, et le corps des mails membres est stocké
+  (`mail_bodies`).
 - **`Expert IA` (104 contacts) et `Influenceur` (4)** existent comme sous-types
   CiviCRM mais pas dans `CONTACT_TYPES` : ils arrivent en `Autre`, sous-type
   d'origine conservé dans les notes. Les ajouter suppose de décider à quel

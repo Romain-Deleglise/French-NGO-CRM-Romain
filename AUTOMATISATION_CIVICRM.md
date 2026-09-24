@@ -112,21 +112,18 @@ repartirait en file indéfiniment.
 
 ## Amorçage : casser l'œuf et la poule
 
-Le circuit ne démarre pas tout seul. La règle Google Workspace ne copie dans la
-boîte d'audit que les mails touchant un **domaine parlementaire**, donc :
+> **Correction (24/09/2026).** Ce document a longtemps affirmé que la règle
+> Google Workspace ne copiait que les mails touchant un domaine parlementaire,
+> et qu'il fallait l'élargir pour la presse. **C'est faux.** Son expression est
+> une seule regex sur les en-têtes complets — `@pauseia\.fr` — en entrant et en
+> sortant : elle copie toute la correspondance externe de l'association. Les
+> échanges avec les journalistes atteignaient donc déjà la boîte d'audit, et
+> **rien n'est à faire côté Workspace**.
 
-```
-aucun échange presse dans la boîte d'audit
-  → aucune adresse presse en file
-    → aucune fiche journaliste
-      → maildomains --google-rule ne sort que 3 domaines
-        → la règle Google n'est jamais élargie
-```
-
-`civicrm-seed.sh` injecte le circuit par un bout : il crée les fiches d'**un
-seul groupe restreint** (12 « Presse - Nationale » par défaut), ce qui fait
-apparaître les domaines de leurs médias, qu'on colle dans la règle Workspace.
-La résolution à la demande prend le relais ensuite.
+`civicrm-seed.sh` reste utile, pour une autre raison : sans fiches journalistes,
+une adresse de presse arrivant dans la boîte d'audit n'est rattachable à
+personne, et aucune convention d'adresses n'est apprise. Il crée les fiches
+d'**un seul groupe restreint** (12 « Presse - Nationale » par défaut).
 
 ```bash
 sudo /opt/scripts/civicrm-seed.sh                      # dry run
@@ -140,20 +137,16 @@ les sélecteurs de personnes des formulaires de rencontre et de courriel
 deviennent inutilisables. Un amorçage doit rester étroit.
 
 Vérifié sur un jeu réaliste — 40 journalistes répartis sur 8 médias : 40 fiches,
-10 organisations Média, 42 liens, et la règle Google passe de 3 à 11 domaines.
+10 organisations Média, 42 liens, et la liste de domaines dérivée passe de 3
+à 11.
 Avec seulement une ou deux fiches par média, rien ne sortirait : un domaine ne
 compte qu'à partir de **deux personnes connues**, ce qui est la règle qui écarte
 les adresses personnelles.
 
-La dernière étape de `civicrm-seed.sh` affiche directement la ligne à coller :
-
-```
-== 3/3  The domains to paste into the Google Workspace rule
-assemblee-nationale.fr europarl.europa.eu franceinfo.fr latribune.fr lefigaro.fr …
-```
-
-Tant qu'un domaine n'est pas dans cette règle, Google ne copie aucun de ses
-mails et rien en aval ne peut le rapprocher — quel que soit le code de ce dépôt.
+La dernière étape de `civicrm-seed.sh` affiche la liste des domaines connus.
+Elle n'a **pas** à être reportée dans Workspace (voir la correction plus haut) ;
+elle sert à voir d'un coup d'œil quels médias le CRM sait désormais reconnaître,
+et alimente le scan du corps des mails côté code (`maildomains.py`).
 
 ## Apprendre la convention de chaque média
 
