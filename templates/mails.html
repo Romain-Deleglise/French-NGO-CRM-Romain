@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% from "_macros.html" import import_banner %}
-{% block title %}Courriels{% endblock %}
+{% block title %}Courriels
+{% if page > 1 or has_next %}
+<nav class="pager">
+  {% if page > 1 %}
+  <a class="btn btn-ghost" href="{{ url_for('mails', q=q, page=page - 1) }}">← Précédents</a>
+  {% endif %}
+  <span class="muted">Page {{ page }}</span>
+  {% if has_next %}
+  <a class="btn btn-ghost" href="{{ url_for('mails', q=q, page=page + 1) }}">Suivants →</a>
+  {% endif %}
+</nav>
+{% endif %}
+{% endblock %}
 {% block content %}
 <div class="page-head">
   <h1>Suivi des échanges</h1>

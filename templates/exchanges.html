@@ -102,7 +102,12 @@
     </tbody>
   </table>
 </div>
-<p class="muted count">{{ conversations|length }} conversation{{ '' if conversations|length == 1 else 's' }}</p>
+<p class="muted count">{{ conversations|length }} conversation{{ '' if conversations|length == 1 else 's' }}
+{% if truncated %}
+  · lues sur les {{ window }} courriels les plus récents
+  <a href="{{ url_for('exchanges', q=q, type=typ, kind=kind, me=me, fenetre=next_window) }}">Élargir à {{ next_window }}</a>
+{% endif %}
+</p>
 {% else %}
 <div class="empty"><p>Aucun échange ne correspond à ces critères.</p></div>
 {% endif %}

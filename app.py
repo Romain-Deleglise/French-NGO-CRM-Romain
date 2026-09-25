@@ -644,6 +644,12 @@ AUTO_IMPORT_LABEL = (
 )
 
 # Mail directions: stored value -> French label shown in the UI.
+# Combien de courriels chaque page en lit. Le suivi des échanges regroupe en
+# fils, donc il lit une fenêtre de courriels ; /mails pagine simplement.
+EXCHANGES_WINDOW = 500
+EXCHANGES_WINDOW_MAX = 20000
+MAILS_PER_PAGE = 100
+
 MAIL_DIRECTIONS = {
     "sent": "Envoyé",
     "received": "Reçu",
@@ -4731,6 +4737,12 @@ def mails():
         LEFT JOIN mail_persons xp ON xp.mail_id = x.id
         LEFT JOIN persons p       ON p.id = xp.person_id
     """
+    # Une page, pas la table entière : la boîte d'audit contient déjà plus de
+    # 2 000 messages et n'en perdra jamais. On demande un élément de plus que la
+    # page pour savoir s'il existe une suite, sans payer un COUNT(*).
+    page = max(1, request.args.get("page", type=int) or 1)
+    offset = (page - 1) * MAILS_PER_PAGE
+    window = "LIMIT ? OFFSET ?"
     if q:
         like = f"%{q}%"
         rows = db.execute(
@@ -4744,14 +4756,19 @@ def mails():
             )
             GROUP BY x.id
             ORDER BY x.mail_date DESC, x.id DESC
-            """,
-            (like, like, like),
+            """ + window,
+            (like, like, like, MAILS_PER_PAGE + 1, offset),
         ).fetchall()
     else:
         rows = db.execute(
-            base + " GROUP BY x.id ORDER BY x.mail_date DESC, x.id DESC"
+            base + " GROUP BY x.id ORDER BY x.mail_date DESC, x.id DESC " + window,
+            (MAILS_PER_PAGE + 1, offset),
         ).fetchall()
-    return render_template("mails.html", mails=rows, q=q, directions=MAIL_DIRECTIONS)
+    has_next = len(rows) > MAILS_PER_PAGE
+    rows = rows[:MAILS_PER_PAGE]
+    return render_template("mails.html", mails=rows, q=q, page=page,
+                           has_next=has_next, first_index=offset + 1,
+                           directions=MAIL_DIRECTIONS)
 
 
 def _save_mail(db, mail):
@@ -5096,10 +5113,19 @@ def exchanges():
     db = get_db()
     q = (request.args.get("q") or "").strip()
     typ = request.args.get("type") or ""
+    # Les fils se regroupent en Python, donc on ne peut pas paginer par
+    # conversation sans couper un fil en deux. On borne plutôt la fenêtre lue :
+    # les N courriels les plus récents, N doublable depuis la page. Sans borne,
+    # cette requête lisait la table entière à chaque affichage — imperceptible à
+    # 2 000 messages, intenable à 30 000.
+    window = min(request.args.get("fenetre", type=int) or EXCHANGES_WINDOW,
+                 EXCHANGES_WINDOW_MAX)
     mails = db.execute(
         "SELECT id, mail_date, direction, subject, summary, document_stored_name "
-        "FROM mails ORDER BY mail_date DESC, id DESC"
+        "FROM mails ORDER BY mail_date DESC, id DESC LIMIT ?", (window + 1,)
     ).fetchall()
+    truncated = len(mails) > window
+    mails = mails[:window]
     kind = request.args.get("kind") or ""
     # "Je suis…" — whose exchanges to show. Remembered in a cookie because the
     # application has no per-user login (one shared password), so this is a
@@ -5126,7 +5152,9 @@ def exchanges():
     response = make_response(render_template(
         "exchanges.html", conversations=convs, q=q, typ=typ, kind=kind,
         contact_types=CONTACT_TYPES, members_list=members_list, me=me,
-        me_name=me_name, directions=MAIL_DIRECTIONS))
+        me_name=me_name, truncated=truncated, window=window,
+        next_window=min(window * 2, EXCHANGES_WINDOW_MAX),
+        directions=MAIL_DIRECTIONS))
     if request.args.get("me") is not None:
         # A year, and no personal data in it: a members.id this browser chose.
         response.set_cookie("crm_me", me, max_age=31536000, samesite="Lax",

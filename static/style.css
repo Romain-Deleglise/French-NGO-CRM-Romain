@@ -238,6 +238,18 @@ table.meetings tbody tr:focus-visible {
   -webkit-box-orient: vertical;
 }
 .count { margin-top: .75rem; font-size: .85rem; }
+.pager { display: flex; align-items: center; gap: .75rem; margin-top: 1rem; }
+
+/* Un message replié dans un fil n'avait aucun indice qu'il se dépliait : le
+   marqueur natif est masqué (voir .mail-msg-head), donc son aperçu tronqué
+   passait pour une donnée manquante. */
+.mail-msg-head::after {
+  content: "⌄";
+  margin-left: .4rem;
+  color: var(--muted);
+  transition: transform .15s;
+}
+.mail-msg[open] > .mail-msg-head::after { transform: rotate(180deg); }
 
 /* ---------- Tags ---------- */
 .tag {
