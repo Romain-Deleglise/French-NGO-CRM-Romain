@@ -32,7 +32,7 @@ class LearnTests(unittest.TestCase):
             record("Marc Lefebvre", "mlefebvre@nouvelobs.com", "Le Nouvel Obs"),
             record("Anne Duval", "aduval@nouvelobs.com", "Le Nouvel Obs"),
         ])
-        self.assertEqual(rows, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 3)])
+        self.assertEqual(rows, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 3, 1.0)])
         self.assertEqual(stats["usable"], 3)
         self.assertEqual(stats["with_template"], 1)
 
@@ -76,7 +76,7 @@ class LearnTests(unittest.TestCase):
             record("Marc Lefebvre", "marc.lefebvre@mixte.fr", "Mixte"),
             record("Paul Simon", "ps@mixte.fr", "Mixte"),
         ])
-        self.assertEqual(rows, [("mixte.fr", "Mixte", None, 3)])
+        self.assertEqual(rows, [("mixte.fr", "Mixte", None, 3, 0.0)])
         self.assertEqual(stats["with_template"], 0)
 
     def test_the_owner_is_the_media_most_addresses_point_at(self):
@@ -119,8 +119,8 @@ class StoreTests(unittest.TestCase):
             "SELECT COUNT(*) FROM mail_conventions").fetchone()[0], 1)
 
     def test_load_conventions_feeds_the_resolver(self):
-        lc.store(self.db, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 40),
-                           ("mixte.fr", "Mixte", None, 9)], "civicrm", NOW)
+        lc.store(self.db, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 40, 0.95),
+                           ("mixte.fr", "Mixte", None, 9, 0.0)], "civicrm", NOW)
         conventions = lc.load_conventions(self.db)
         # Only a domain with both a média and a template can resolve a name.
         self.assertEqual(conventions, {
@@ -155,13 +155,13 @@ class KnownDomainTests(unittest.TestCase):
         # Without the learned table the two-person rule rejects it.
         self.assertNotIn("nouvelobs.com", md.collect(self.db))
         lc.ensure_table(self.db)
-        lc.store(self.db, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 40)],
+        lc.store(self.db, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 40, 0.95)],
                  "civicrm", NOW)
         self.assertIn("nouvelobs.com", md.collect(self.db))
 
     def test_freemail_stays_out_even_if_a_row_slipped_in(self):
         lc.ensure_table(self.db)
-        lc.store(self.db, [("orange.fr", "Orange", "prenom.nom", 40)],
+        lc.store(self.db, [("orange.fr", "Orange", "prenom.nom", 40, 0.9)],
                  "civicrm", NOW)
         self.assertNotIn("orange.fr", md.collect(self.db))
 
@@ -182,7 +182,7 @@ class ResolverTests(unittest.TestCase):
             """
         )
         lc.ensure_table(db)
-        lc.store(db, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 40)],
+        lc.store(db, [("nouvelobs.com", "Le Nouvel Obs", "pnom", 40, 0.95)],
                  "civicrm", NOW)
         self.assertEqual(civicrm_lookup.domain_conventions(db), {
             "nouvelobs.com": {"media": "Le Nouvel Obs", "template": "pnom"}})

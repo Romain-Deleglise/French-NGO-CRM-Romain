@@ -150,40 +150,62 @@ docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py \
   --apply /tmp/civi-contacts.json --emails /tmp/civi-emails.json $COMMIT
 
 # --------------------------------------------------------------------------- #
-say "4b/5  Addresses left over: try each média's own convention"
-# Seeding gave us real addresses per média, and a newsroom follows one
-# convention (Le Figaro: <initiale><nom>). So an address CiviCRM holds no record
-# of can still be traced to a journalist it knows BY NAME. Recognition only —
-# nothing here invents an address to write to.
+say "4b/5  Addresses left over: try each newsroom's own convention"
+# A newsroom follows one convention (Le Figaro: <initiale><nom>), learned in
+# 1b/5 over all of CiviCRM. So an address CiviCRM holds no record of can still
+# be traced to a journalist it knows BY NAME. Recognition only — nothing here
+# invents an address to write to.
 docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py --patterns \
   > "$WORK/patterns.json" 2>/dev/null || echo "{}" > "$WORK/patterns.json"
 
-MEDIAS=$(python3 - "$WORK/patterns.json" <<'PY'
+# Candidates are fetched BY DOMAIN, the employer name being only an extra net.
+# Asking by employer alone was the original design and it under-reached badly:
+# CiviCRM labels employers regionally, so francetv.fr's 2 055 journalists are
+# spread over "FRANCE 3 PARIS ILE-DE-FRANCE", "FRANCE 3 OCCITANIE" and dozens
+# more, and only the majority label was ever queried.
+PARAMS=$(python3 - "$WORK/patterns.json" <<'PYEOF'
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         data = json.load(fh)
 except (ValueError, OSError):
     data = {}
-print(json.dumps(sorted({v["media"] for v in data.values()})))
-PY
+if not data:
+    print("")
+    raise SystemExit(0)
+clauses = [["email_primary.email", "LIKE", "%@" + d] for d in sorted(data)]
+medias = sorted({v["media"] for v in data.values() if v.get("media")})
+if medias:
+    clauses.append(["employer_id.display_name", "IN", medias])
+print(json.dumps({
+    "select": ["id", "display_name", "contact_sub_type", "email_primary.email",
+               "employer_id.display_name",
+               "Analyse_strat_gique_Pause_IA.Alignement",
+               "Analyse_strat_gique_Pause_IA.Niveau_d_influence",
+               "Description_courte.Description_courte",
+               "Compte_R_seaux_Sociaux.Twitter",
+               "Compte_R_seaux_Sociaux.LinkedIn"],
+    "where": [["OR", clauses],
+              ["contact_sub_type", "CONTAINS", "Journaliste"],
+              ["is_deleted", "=", False]],
+    "limit": 0,
+}, ensure_ascii=False))
+PYEOF
 )
 
-if [ "$MEDIAS" = "[]" ]; then
+if [ -z "$PARAMS" ]; then
   # Not "seed me": --patterns lists only the conventions the *queued* addresses
   # need. An empty result usually means those addresses sit on gmail, proton and
   # the like, where no convention exists or ever could.
   echo "   aucune adresse en attente sur un domaine dont la convention est connue"
-  echo "   (les conventions apprises : civicrm_lookup.py --patterns --all)"
+  echo "   (les conventions apprises : learn_conventions.py --show)"
 else
-  echo "   médias concernés : $MEDIAS"
-  civi Contact.get \
-    "{\"select\":[\"id\",\"display_name\",\"contact_sub_type\",\"email_primary.email\",\"employer_id.display_name\",\"Analyse_strat_gique_Pause_IA.Alignement\",\"Analyse_strat_gique_Pause_IA.Niveau_d_influence\",\"Description_courte.Description_courte\",\"Compte_R_seaux_Sociaux.Twitter\",\"Compte_R_seaux_Sociaux.LinkedIn\"],\"where\":[[\"employer_id.display_name\",\"IN\",$MEDIAS],[\"contact_sub_type\",\"CONTAINS\",\"Journaliste\"],[\"is_deleted\",\"=\",false]],\"limit\":0}" \
-    > "$WORK/civi-names.json"
-  echo "   $(grep -c '"id"' "$WORK/civi-names.json" || true) journaliste(s) de ces médias"
+  civi Contact.get "$PARAMS" > "$WORK/civi-names.json"
+  echo "   $(grep -c '"id"' "$WORK/civi-names.json" || true) journaliste(s) candidat(e)s"
   docker cp "$WORK/civi-names.json" "$CRM_CONTAINER:/tmp/civi-names.json"
   docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py \
     --apply-names /tmp/civi-names.json $COMMIT
+  docker exec "$CRM_CONTAINER" rm -f /tmp/civi-names.json
 fi
 
 # --------------------------------------------------------------------------- #

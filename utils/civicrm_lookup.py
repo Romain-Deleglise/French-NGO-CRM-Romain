@@ -533,13 +533,25 @@ def cmd_apply_names(db, args):
         records = json.load(fh)
 
     conventions = domain_conventions(db)
-    by_media = {}
+    # Candidates are indexed by the domain of their own address FIRST, and by
+    # their employer only as a fallback. Grouping by média was the original
+    # design and it under-reached badly: CiviCRM labels employers regionally, so
+    # francetv.fr comes out as "FRANCE 3 PARIS ILE-DE-FRANCE" and only that one
+    # newsroom's journalists would have been compared — a few dozen out of the
+    # 2 055 people writing from francetv.fr. The domain is what is stable.
+    by_domain, by_media = {}, {}
     for record in records:
-        media = (record.get("employer_id.display_name") or "").strip()
         name = (record.get("display_name") or "").strip()
-        if media and name:
-            by_media.setdefault(norm_name(media), []).append(
-                (record.get("id"), name, record))
+        if not name:
+            continue
+        entry = (record.get("id"), name, record)
+        mail = clean_email(record.get("email_primary.email"))
+        domain = mail.rpartition("@")[2] if mail else None
+        if domain:
+            by_domain.setdefault(domain, []).append(entry)
+        media = (record.get("employer_id.display_name") or "").strip()
+        if media:
+            by_media.setdefault(norm_name(media), []).append(entry)
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = now[:10]
@@ -555,7 +567,16 @@ def cmd_apply_names(db, args):
         if not convention:
             untouched += 1
             continue
-        candidates = by_media.get(norm_name(convention["media"]), [])
+        # Both pools: people writing from that domain, plus people CiviCRM
+        # attributes to the média but whose own address is elsewhere (a
+        # freelance on gmail). Deduplicated on the CiviCRM contact id.
+        candidates, seen = [], set()
+        for entry in (by_domain.get(domain, [])
+                      + by_media.get(norm_name(convention["media"] or ""), [])):
+            if entry[0] in seen:
+                continue
+            seen.add(entry[0])
+            candidates.append(entry)
         hits = mailpatterns.resolve_all(
             address, convention["template"], [(c[0], c[1]) for c in candidates])
         if len(hits) > 1:

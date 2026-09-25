@@ -19,9 +19,14 @@ only: rebuild the candidate from a *known* person and compare it to an address
 that actually turned up in the mailbox. A match is still routed as
 low-confidence, because a convention is a habit, not a rule.
 
-Learning is deliberately strict. A domain gets a convention only when at least
-two known addresses agree on it and none contradicts it — one address always
-matches several templates, and a wrong convention silently mis-attributes mail.
+Learning is deliberately strict, but not unanimous. A domain gets a convention
+when at least two known addresses agree on it AND a clear majority of them do —
+one address always matches several templates, and a wrong convention silently
+mis-attributes mail. Unanimity was the first rule, and it collapsed at scale:
+`francetv.fr` has 2 055 addresses in CiviCRM, all but a handful `prenom.nom`,
+and those few historical exceptions vetoed the whole newsroom. A majority rule
+keeps the protection (a média that genuinely mixes conventions still gets none)
+without letting one outlier silence 2 000 addresses.
 """
 import re
 import unicodedata
@@ -29,6 +34,13 @@ import unicodedata
 # At least this many known addresses must agree before a domain gets a
 # convention. Two is the floor at which a template stops being a coincidence.
 MIN_EXAMPLES = 2
+
+# And they must be this share of the domain's usable addresses. Below it the
+# newsroom really does mix conventions and gets none: rebuilding a name under a
+# minority template would mis-attribute more mail than it identifies. At 0.6 a
+# domain split 50/50 between two conventions is refused, while one lone
+# exception among hundreds no longer vetoes anything.
+MIN_SHARE = 0.6
 
 # Particles dropped when reading a surname: newsrooms fold "De Malet" into
 # "demalet" and "Le Proktor" into "leproktor", but almost never keep the space.
@@ -129,13 +141,28 @@ def templates_matching(local_part, display_name):
     return found
 
 
-def learn(pairs, min_examples=MIN_EXAMPLES):
+def learn(pairs, min_examples=MIN_EXAMPLES, min_share=MIN_SHARE):
     """{domain: template} from (display_name, address) pairs we already trust.
 
-    A domain keeps a template only when every known address there agrees on it
-    and at least `min_examples` back it. Newsrooms that mix conventions — or
-    that we know too little about — get none, and fall through to the generic
-    matcher instead of being matched wrongly.
+    A domain keeps the template that explains the largest share of its addresses,
+    provided `min_examples` back it and that share reaches `min_share`. Newsrooms
+    that genuinely mix conventions — or that we know too little about — get none,
+    and fall through to the generic matcher instead of being matched wrongly.
+
+    `learn_shares` is the same computation with the evidence kept; this wrapper
+    exists because most callers only want the verdict.
+    """
+    return {d: entry["template"] for d, entry in learn_shares(
+        pairs, min_examples, min_share).items() if entry["template"]}
+
+
+def learn_shares(pairs, min_examples=MIN_EXAMPLES, min_share=MIN_SHARE):
+    """{domain: {"template", "share", "examples", "votes"}} — the evidence too.
+
+    `template` is None when no convention reaches `min_share`; the domain is
+    still reported, because knowing a domain exists is useful on its own (see
+    maildomains). `share` is the fraction of the domain's usable addresses the
+    winning template explains, `examples` how many addresses voted at all.
     """
     per_domain = {}
     for display_name, address in pairs:
@@ -155,17 +182,28 @@ def learn(pairs, min_examples=MIN_EXAMPLES):
 
     learned = {}
     for domain, entry in per_domain.items():
-        if entry["count"] < min_examples:
+        count = entry["count"]
+        if count < min_examples:
             continue
-        common = set.intersection(*entry["sets"])
-        if len(common) == 1:
-            learned[domain] = next(iter(common))
-        elif common:
-            # Several templates survive — e.g. everyone's first name happens to
-            # be unique. Prefer the most specific (the longest rendering), which
-            # is the one carrying both name parts.
-            learned[domain] = sorted(common, key=lambda t: (
-                -len(build(t, "prenom", "nom") or ""), t))[0]
+        votes = {}
+        for candidates in entry["sets"]:
+            for template in candidates:
+                votes[template] = votes.get(template, 0) + 1
+        best = max(votes.values())
+        winners = [t for t, v in votes.items() if v == best]
+        # Several templates tie — e.g. every first name at the domain happens to
+        # be unique, so "prenom" explains as much as "prenom.nom". Prefer the
+        # most specific (the longest rendering), the one carrying both parts.
+        winner = sorted(winners, key=lambda t: (
+            -len(build(t, "prenom", "nom") or ""), t))[0]
+        share = best / count
+        keep = best >= min_examples and share >= min_share
+        learned[domain] = {
+            "template": winner if keep else None,
+            "share": share if keep else 0.0,
+            "examples": best if keep else 0,
+            "votes": count,
+        }
     return learned
 
 

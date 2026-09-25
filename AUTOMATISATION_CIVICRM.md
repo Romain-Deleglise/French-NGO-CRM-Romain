@@ -178,10 +178,14 @@ réellement apparue dans la boîte d'audit.
 
 ### Les garde-fous
 
-- **Deux exemples minimum, et aucune contradiction.** Une seule adresse
+- **Deux exemples minimum, et une nette majorité (60 %).** Une seule adresse
   correspond toujours à plusieurs modèles ; en faire une convention
-  mésattribuerait tous les mails suivants. Un média qui mélange les conventions
-  n'en reçoit aucune et retombe sur le rapprochement générique.
+  mésattribuerait tous les mails suivants. Un média qui mélange réellement les
+  conventions n'en reçoit aucune et retombe sur le rapprochement générique.
+  La règle était d'abord l'unanimité, et elle s'est effondrée à l'échelle :
+  `francetv.fr` porte 2 055 adresses dans CiviCRM, massivement `prenom.nom`, et
+  une poignée d'exceptions historiques faisait taire toute la rédaction. La part
+  effectivement expliquée est enregistrée (colonne `share`) et affichée.
 - **L'ambiguïté est refusée, jamais tranchée.** `pdupont@lefigaro.fr` avec un
   Pierre Dupont *et* un Paul Dupont à la rédaction : l'adresse reste en file
   avec les deux noms affichés, pour qu'un humain décide.
@@ -226,6 +230,14 @@ Deux effets, les mêmes que ci-dessus mais bien plus loin :
   `francetv.fr` et `nouvelobs.com` qui partaient à la poubelle. Les messageries
   grand public en restent exclues, la règle vaut plus que la table.
 - le rapprochement par convention (`4b/5`) dispose de centaines de médias.
+
+**Les candidats sont cherchés par domaine, pas par nom de média.** CiviCRM
+étiquette les employeurs par région : `francetv.fr` ressort en « FRANCE 3 PARIS
+ILE-DE-FRANCE », `centrefrance.com` en « LE POPULAIRE DU CENTRE ». Interroger par
+employeur ne comparait donc une adresse en attente qu'aux quelques dizaines de
+journalistes du libellé majoritaire, au lieu des 2 055 de `francetv.fr`. Le
+domaine est ce qui est stable ; le nom d'employeur ne sert plus que de filet
+supplémentaire, pour un ou une pigiste dont l'adresse personnelle est ailleurs.
 
 Là où les deux sources se contredisent, CiviCRM l'emporte : plus d'exemples.
 

@@ -127,3 +127,51 @@ class BuildTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DominanceTests(unittest.TestCase):
+    """A majority learns the convention; a genuine mix still learns none.
+
+    Unanimity was the first rule and it collapsed on real data: francetv.fr has
+    2 055 addresses in CiviCRM, overwhelmingly `prenom.nom`, and a handful of
+    historical exceptions vetoed the whole newsroom.
+    """
+
+    def _pairs(self, names, template):
+        out = []
+        for first, last in names:
+            local = {"prenom.nom": f"{first}.{last}".lower(),
+                     "pnom": f"{first[0]}{last}".lower()}[template]
+            out.append((f"{first} {last}", f"{local}@francetv.fr"))
+        return out
+
+    NAMES = [("Emmanuel", "Pall"), ("Pierre", "Debaudouin"),
+             ("Claire", "Bouchouchi"), ("Marc", "Lefebvre"),
+             ("Anne", "Duval"), ("Paul", "Simon"), ("Luc", "Renard"),
+             ("Sophie", "Marchand"), ("Yann", "Bertrand"), ("Zoe", "Camus")]
+
+    def test_one_outlier_no_longer_vetoes_a_newsroom(self):
+        pairs = self._pairs(self.NAMES, "prenom.nom")
+        pairs.append(("Jean Historique", "jhistorique@francetv.fr"))
+        self.assertEqual(mp.learn(pairs).get("francetv.fr"), "prenom.nom")
+
+    def test_a_real_fifty_fifty_mix_is_still_refused(self):
+        pairs = (self._pairs(self.NAMES[:5], "prenom.nom")
+                 + self._pairs(self.NAMES[5:], "pnom"))
+        self.assertIsNone(mp.learn(pairs).get("francetv.fr"))
+
+    def test_the_share_is_reported(self):
+        pairs = self._pairs(self.NAMES, "prenom.nom")
+        pairs.append(("Jean Historique", "jhistorique@francetv.fr"))
+        entry = mp.learn_shares(pairs)["francetv.fr"]
+        self.assertEqual(entry["template"], "prenom.nom")
+        self.assertEqual(entry["votes"], 11)
+        self.assertAlmostEqual(entry["share"], 10 / 11)
+
+    def test_unanimity_still_reads_as_a_full_share(self):
+        entry = mp.learn_shares(self._pairs(self.NAMES, "pnom"))["francetv.fr"]
+        self.assertEqual((entry["template"], entry["share"]), ("pnom", 1.0))
+
+    def test_two_examples_remain_the_floor(self):
+        entry = mp.learn_shares(self._pairs(self.NAMES[:1], "pnom"))
+        self.assertEqual(entry, {})

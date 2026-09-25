@@ -66,11 +66,18 @@ def ensure_table(db):
             media      TEXT,
             template   TEXT,
             examples   INTEGER NOT NULL DEFAULT 0,
+            share      REAL NOT NULL DEFAULT 0,
             source     TEXT NOT NULL,
             learned_at TEXT NOT NULL
         );
         """
     )
+    # Same idempotent pattern as init_db(): guarded ALTER rather than a
+    # migration file, for a table created before `share` existed.
+    columns = {r[1] for r in db.execute("PRAGMA table_info(mail_conventions)")}
+    if "share" not in columns:
+        db.execute("ALTER TABLE mail_conventions ADD COLUMN "
+                   "share REAL NOT NULL DEFAULT 0")
 
 
 def load_domains(db):
@@ -99,10 +106,11 @@ def load_conventions(db):
 def learn(records, min_examples=mailpatterns.MIN_EXAMPLES):
     """(rows, stats) from a CiviCRM journalist export.
 
-    A row is (domain, média, template, examples). `template` may be None: a
-    domain with enough addresses but no single convention is still worth
+    A row is (domain, média, template, examples, share). `template` may be None:
+    a domain with enough addresses but no dominant convention is still worth
     recording, because knowing it belongs to a média helps the body scan even
-    when no address can be rebuilt from a name.
+    when no address can be rebuilt from a name. `share` is how much of the
+    domain's evidence the retained template explains — 0 when there is none.
     """
     pairs, per_domain, medias = [], {}, {}
     skipped = 0
@@ -123,7 +131,7 @@ def learn(records, min_examples=mailpatterns.MIN_EXAMPLES):
             medias.setdefault(domain, {})
             medias[domain][media] = medias[domain].get(media, 0) + 1
 
-    templates = mailpatterns.learn(pairs, min_examples)
+    learned = mailpatterns.learn_shares(pairs, min_examples)
 
     rows = []
     for domain, count in sorted(per_domain.items()):
@@ -132,9 +140,14 @@ def learn(records, min_examples=mailpatterns.MIN_EXAMPLES):
         owner = None
         if domain in medias:
             # A domain carries the occasional mistyped employer; the média most
-            # of its addresses point at is the one that owns it.
+            # of its addresses point at is the one that owns it. CiviCRM labels
+            # them regionally ("FRANCE 3 PARIS ILE-DE-FRANCE" on francetv.fr),
+            # so this is a label for a human reading the table — the resolver
+            # groups candidates by domain, not by this name.
             owner = max(medias[domain].items(), key=lambda kv: kv[1])[0]
-        rows.append((domain, owner, templates.get(domain), count))
+        entry = learned.get(domain) or {}
+        rows.append((domain, owner, entry.get("template"), count,
+                     round(entry.get("share") or 0.0, 3)))
     return rows, {
         "records": len(records),
         "usable": len(pairs),
@@ -148,21 +161,22 @@ def store(db, rows, source, now):
     db.execute("DELETE FROM mail_conventions WHERE source = ?", (source,))
     db.executemany(
         "INSERT OR REPLACE INTO mail_conventions "
-        "(domain, media, template, examples, source, learned_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [(d, m, t, n, source, now) for d, m, t, n in rows],
+        "(domain, media, template, examples, share, source, learned_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(d, m, t, n, sh, source, now) for d, m, t, n, sh in rows],
     )
 
 
 def cmd_show(db, args):
     ensure_table(db)
     rows = db.execute(
-        "SELECT domain, COALESCE(media, '—'), COALESCE(template, '—'), examples "
-        "FROM mail_conventions ORDER BY examples DESC, domain LIMIT ?",
+        "SELECT domain, COALESCE(media, '—'), COALESCE(template, '—'), examples, "
+        "share FROM mail_conventions ORDER BY examples DESC, domain LIMIT ?",
         (args.limit,),
     ).fetchall()
-    for domain, media, template, examples in rows:
-        log(f"  {examples:>4}× {domain:<28} {template:<12} {media}")
+    for domain, media, template, examples, share in rows:
+        log(f"  {examples:>4}× {domain:<28} {template:<12} "
+            f"{round((share or 0) * 100):>3}%  {media}")
     total, with_t = db.execute(
         "SELECT COUNT(*), SUM(template IS NOT NULL) FROM mail_conventions"
     ).fetchone()
@@ -206,17 +220,17 @@ def main():
             f"{stats['with_template']} avec une convention identifiée.")
 
         by_template = {}
-        for _d, _m, template, _n in rows:
+        for _d, _m, template, _n, _s in rows:
             key = template or "(aucune)"
             by_template[key] = by_template.get(key, 0) + 1
         log("Répartition : " + ", ".join(
             f"{n}× {t}" for t, n in sorted(by_template.items(),
                                            key=lambda kv: -kv[1])))
 
-        for domain, media, template, examples in sorted(
+        for domain, media, template, examples, share in sorted(
                 rows, key=lambda r: -r[3])[:args.limit]:
             log(f"  {examples:>4}× {domain:<28} {template or '—':<12} "
-                f"{media or '—'}")
+                f"{round(share * 100):>3}%  {media or '—'}")
 
         if args.commit:
             ensure_table(db)

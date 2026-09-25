@@ -518,3 +518,116 @@ class QueueAndApplyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApplyNamesTests(unittest.TestCase):
+    """Resolving a queued address by its newsroom's convention.
+
+    The point of the regression here: candidates are grouped by the DOMAIN of
+    their own address, not by their employer's name. CiviCRM labels employers
+    regionally — francetv.fr's 2 055 journalists are spread over "FRANCE 3 PARIS
+    ILE-DE-FRANCE", "FRANCE 3 OCCITANIE" and dozens more — so a média-keyed
+    lookup compared a queued address against a few dozen people instead of all
+    of them, and quietly resolved almost nothing.
+    """
+
+    class Args:
+        commit = True
+        include_other = False
+
+        def __init__(self, path):
+            self.apply_names = path
+
+    def setUp(self):
+        import learn_conventions as lc
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(
+            """
+            CREATE TABLE persons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, contact_type TEXT NOT NULL,
+                stance TEXT NOT NULL, email TEXT, social_links TEXT, notes TEXT,
+                added_by INTEGER, validated_by INTEGER, created_at TEXT NOT NULL
+            );
+            CREATE TABLE organisations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, org_type TEXT NOT NULL, stance TEXT NOT NULL,
+                notes TEXT, created_at TEXT NOT NULL
+            );
+            CREATE TABLE person_organisations (
+                person_id INTEGER NOT NULL, organisation_id INTEGER NOT NULL,
+                PRIMARY KEY (person_id, organisation_id)
+            );
+            """
+        )
+        cl.ensure_civicrm_tables(self.db)
+        lc.ensure_table(self.db)
+        lc.store(self.db, [("francetv.fr", "FRANCE 3 PARIS ILE-DE-FRANCE",
+                            "prenom.nom", 2055, 0.93)], "civicrm", NOW)
+        self.addCleanup(self.db.close)
+
+    def _record(self, cid, name, mail, media):
+        row = dict(FIGARO)
+        row.update({"id": cid, "display_name": name,
+                    "email_primary.email": mail,
+                    "employer_id.display_name": media})
+        return row
+
+    def _run(self, records):
+        import json
+        import tempfile
+        fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                         encoding="utf-8")
+        json.dump(records, fh)
+        fh.close()
+        self.addCleanup(os.unlink, fh.name)
+        cl.cmd_apply_names(self.db, self.Args(fh.name))
+
+    def test_resolves_against_a_regional_newsroom_it_never_names(self):
+        cl.enqueue(self.db, "emmanuel.pall@francetv.fr", "", NOW)
+        # The journalist sits under a *different* regional label than the one
+        # the convention carries: only the shared domain connects them.
+        self._run([self._record(1, "Emmanuel Pall", "e.pall@francetv.fr",
+                                "FRANCE 3 OCCITANIE")])
+        status, person_id = self.db.execute(
+            "SELECT status, person_id FROM civicrm_pending WHERE email = ?",
+            ("emmanuel.pall@francetv.fr",)).fetchone()
+        self.assertEqual(status, "resolved")
+        name, mail, notes = self.db.execute(
+            "SELECT name, email, notes FROM persons WHERE id = ?",
+            (person_id,)).fetchone()
+        self.assertEqual((name, mail), ("Emmanuel Pall",
+                                        "emmanuel.pall@francetv.fr"))
+        # A convention is a habit, not a rule: the fiche has to say so.
+        self.assertIn("à confirmer", notes)
+
+    def test_a_freelance_whose_own_address_is_elsewhere_still_counts(self):
+        cl.enqueue(self.db, "pierre.debaudouin@francetv.fr", "", NOW)
+        self._run([self._record(2, "Pierre Debaudouin",
+                                "pierre.debaudouin@gmail.com",
+                                "FRANCE 3 PARIS ILE-DE-FRANCE")])
+        status, = self.db.execute(
+            "SELECT status FROM civicrm_pending WHERE email = ?",
+            ("pierre.debaudouin@francetv.fr",)).fetchone()
+        self.assertEqual(status, "resolved")
+
+    def test_two_journalists_building_the_same_address_are_left_in_the_queue(self):
+        cl.enqueue(self.db, "jean.martin@francetv.fr", "", NOW)
+        self._run([
+            self._record(3, "Jean Martin", "j.martin@francetv.fr", "FRANCE 3"),
+            self._record(4, "Jean Martin", "jean.martin2@francetv.fr",
+                         "FRANCE 3 OCCITANIE"),
+        ])
+        status, = self.db.execute(
+            "SELECT status FROM civicrm_pending WHERE email = ?",
+            ("jean.martin@francetv.fr",)).fetchone()
+        self.assertEqual(status, "pending")
+
+    def test_an_unknown_domain_is_left_alone(self):
+        cl.enqueue(self.db, "willa@godemandguide.co", "", NOW)
+        self._run([self._record(5, "Willa Nobody", "willa@godemandguide.co",
+                                "GO DEMAND GUIDE")])
+        status, = self.db.execute(
+            "SELECT status FROM civicrm_pending WHERE email = ?",
+            ("willa@godemandguide.co",)).fetchone()
+        self.assertEqual(status, "pending")

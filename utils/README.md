@@ -509,7 +509,7 @@ a écrit, en lecture seule, orchestrés depuis l'hôte.
 | `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs de personnes). |
 | `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. Servent au scan du corps des mails et à savoir si une adresse est déjà connue — rien à reporter dans Workspace. |
 | `learn_conventions.py` | Apprend la convention d'adresses de **tous** les journalistes de CiviCRM (~12 900), pas seulement de nos fiches : `--file <export>`, `--commit`, `--show`. Ne crée **aucune fiche** — ne garde qu'un domaine, un média, un gabarit, un compteur ; les adresses sont jetées. C'est ce qui rend `cbouchouchi@nouvelobs.com` ou `emmanuel.pall@francetv.fr` reconnaissables alors qu'on n'a qu'une fiche sur ces rédactions. |
-| `mailpatterns.py` | La convention d'adresses de chaque média, apprise sur les adresses connues. Sert à **reconnaître** une adresse, jamais à en construire une pour y écrire. |
+| `mailpatterns.py` | La convention d'adresses de chaque média, apprise sur les adresses connues. Sert à **reconnaître** une adresse, jamais à en construire une pour y écrire. Un gabarit est retenu s'il explique au moins 60 % des adresses du domaine (`MIN_SHARE`) : l'unanimité exigée au départ laissait une exception historique annuler une rédaction de 2 000 adresses. |
 | `deploy/civicrm-seed.sh` | Amorçage, une fois : crée les fiches d'un groupe presse restreint, sans quoi aucune adresse de presse n'est rattachable ni aucune convention apprenable. |
 | `deploy/civicrm-sync.sh` | Le cycle quotidien : `cv` → `docker cp` → scripts. Planifié à 06:30 par `civicrm-sync.timer`, après l'import des mails de membres de 06:10. |
 
