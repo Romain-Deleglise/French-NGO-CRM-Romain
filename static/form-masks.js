@@ -588,40 +588,208 @@
     sync();
   }
 
-  // The « À contacter » picker lists people grouped by organisation, so someone
-  // in two of them appears twice. The two boxes are the same person: ticking
-  // one ticks the other, and a group's « Tout cocher » flips the whole group
-  // (and flips it back once everything in it is ticked).
-  function attachPeopleForm(form) {
-    function boxes(scope) {
-      return scope.querySelectorAll(
-        'input[type="checkbox"][name="person_ids"]:not([disabled])'
+  // Répartition of « À contacter ». Each utilisateurice's « Ne contacte pas »
+  // list only offers the organisations ticked above it; a hidden exclusion is
+  // unticked too, so it cannot linger unseen and be posted. A type's « Tout
+  // cocher » ticks all its organisations (or unticks them once all are), its
+  // number and unit fill in its organisations', and « Tous : <type> » in an
+  // exclusion list ticks that type's organisations in that list.
+  function attachSplitForm(form) {
+    function orgBoxes(type) {
+      return form.querySelectorAll(
+        'input[name="org_ids"][data-org-type="' + type + '"]'
       );
     }
-    function mirror(box) {
-      boxes(form).forEach(function (other) {
-        if (other !== box && other.value === box.value) other.checked = box.checked;
+    function visibleExclusions(box, type) {
+      return Array.prototype.filter.call(
+        box.querySelectorAll('[data-split-org][data-org-type="' + type + '"]'),
+        function (label) { return !label.hidden; }
+      ).map(function (label) { return label.querySelector("input"); });
+    }
+    function sync() {
+      var chosen = {};
+      form.querySelectorAll('input[name="org_ids"]').forEach(function (b) {
+        if (b.checked) chosen[b.value] = true;
+      });
+      form.querySelectorAll(".split-excl").forEach(function (box) {
+        var any = false;
+        box.querySelectorAll("[data-split-org]").forEach(function (label) {
+          var on = !!chosen[label.getAttribute("data-split-org")];
+          label.hidden = !on;
+          if (!on) label.querySelector("input").checked = false;
+          any = any || on;
+        });
+        box.querySelector("[data-split-none]").hidden = any;
+        syncTypes(box);
+      });
+    }
+    function syncTypes(box) {
+      box.querySelectorAll("[data-split-excl-type]").forEach(function (label) {
+        var inputs = visibleExclusions(box, label.getAttribute("data-split-excl-type"));
+        label.hidden = !inputs.length;
+        label.querySelector("input").checked = inputs.length > 0 &&
+          inputs.every(function (i) { return i.checked; });
       });
     }
 
-    form.addEventListener("change", function (e) {
-      if (e.target.name === "person_ids") mirror(e.target);
-    });
-
-    form.querySelectorAll("[data-check-all]").forEach(function (btn) {
-      var group = btn.closest("[data-people-group]");
-      if (!group) return;
-      btn.addEventListener("click", function () {
-        var inGroup = boxes(group);
-        var allOn = Array.prototype.every.call(inGroup, function (b) {
-          return b.checked;
-        });
-        inGroup.forEach(function (b) {
-          b.checked = !allOn;
-          mirror(b);
-        });
+    // A type's number and unit are copied into every one of its
+    // organisations as they are typed, overwriting what was there; any one
+    // of them can still be changed afterwards.
+    form.querySelectorAll("[data-type-target]").forEach(function (input) {
+      var type = input.getAttribute("data-type-target");
+      input.addEventListener("input", function () {
+        form.querySelectorAll('[data-org-target="' + type + '"]')
+          .forEach(function (o) { o.value = input.value; });
       });
     });
+    form.querySelectorAll("[data-type-unit]").forEach(function (select) {
+      var type = select.getAttribute("data-type-unit");
+      select.addEventListener("change", function () {
+        form.querySelectorAll('[data-org-unit="' + type + '"]')
+          .forEach(function (o) { o.value = select.value; });
+      });
+    });
+
+    form.querySelectorAll("[data-split-type-all]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var boxes = orgBoxes(btn.getAttribute("data-split-type-all"));
+        var allOn = Array.prototype.every.call(boxes, function (b) {
+          return b.checked;
+        });
+        boxes.forEach(function (b) { b.checked = !allOn; });
+        sync();
+      });
+    });
+
+    // « N avec les filtres » under each organisation, recounted as the
+    // courriels bounds are typed, « Ne pas tirer… » is ticked or the
+    // déclaration menu changes, from the [courriels, déjà en attente, a signé]
+    // triples the page carries. Shown only while a
+    // filter is set: otherwise it would just repeat the total.
+    function number(name) {
+      var el = form.querySelector('[name="' + name + '"]');
+      var v = el && el.value.trim();
+      return v === "" || v == null || isNaN(+v) ? null : +v;
+    }
+    function recount() {
+      var min = number("min_mails"), max = number("max_mails");
+      var skip = form.querySelector('[name="skip_pending"]');
+      skip = !!(skip && skip.checked);
+      var decl = form.querySelector('[name="declaration"]');
+      decl = decl ? decl.value : "";
+      var active = min !== null || max !== null || skip || decl !== "";
+      form.querySelectorAll("[data-members]").forEach(function (counts) {
+        var span = counts.querySelector("[data-match]");
+        if (!active) { span.hidden = true; return; }
+        var n = 0;
+        JSON.parse(counts.getAttribute("data-members")).forEach(function (m) {
+          if ((min === null || m[0] >= min) && (max === null || m[0] <= max) &&
+              !(skip && m[1]) &&
+              !(decl === "oui" && !m[2]) && !(decl === "non" && m[2])) n++;
+        });
+        span.textContent = " · " + n + " avec les filtres";
+        span.classList.toggle("warn", n === 0);
+        span.hidden = false;
+      });
+    }
+    form.querySelectorAll("[data-split-filter]").forEach(function (el) {
+      el.addEventListener("input", recount);
+      el.addEventListener("change", recount);
+    });
+    recount();
+
+    form.addEventListener("change", function (e) {
+      if (e.target.name === "org_ids") return sync();
+      var box = e.target.closest(".split-excl");
+      if (!box) return;
+      // An exclusion only counts for someone taking part: ticking one ticks
+      // the utilisateurice too, rather than being silently ignored.
+      if (e.target.checked) {
+        var who = box.closest(".split-mod")
+          .querySelector('input[name="moderator_ids"]');
+        if (who) who.checked = true;
+      }
+      var typeLabel = e.target.closest("[data-split-excl-type]");
+      if (typeLabel) {
+        visibleExclusions(box, typeLabel.getAttribute("data-split-excl-type"))
+          .forEach(function (i) { i.checked = e.target.checked; });
+      }
+      syncTypes(box);
+    });
+    sync();
+  }
+
+  // Répartition preview: choosing another utilisateurice for someone moves
+  // their row onto that utilisateurice's board, in its sorted place, and the
+  // boards' counts follow.
+  function attachSplitPreview(form) {
+    function refresh(board) {
+      var n = board.querySelectorAll(".split-rows > li").length;
+      board.querySelector("[data-split-board-count]").textContent = n;
+      board.querySelector("[data-split-board-empty]").hidden = n > 0;
+    }
+    form.addEventListener("change", function (e) {
+      if (!/^assign-/.test(e.target.name || "")) return;
+      var row = e.target.closest("li");
+      var from = row.closest("[data-split-board]");
+      var to = form.querySelector('[data-split-board="' + e.target.value + '"]');
+      if (!to || to === from) return;
+      var list = to.querySelector(".split-rows");
+      var key = row.getAttribute("data-sort");
+      var next = Array.prototype.find.call(list.children, function (li) {
+        return li.getAttribute("data-sort") > key;
+      });
+      list.insertBefore(row, next || null);
+      refresh(from);
+      refresh(to);
+      e.target.focus();
+    });
+  }
+
+  // /todo: the « Utilisateurice » filter on a section. Items carry data-by,
+  // the comma-separated names of who is to do them (empty for « quiconque »).
+  // Blocks left with nothing visible hide, headings and all, and the count in
+  // the section title follows. The choice is remembered per browser, like
+  // data-remember, since the shared login cannot say who is looking.
+  function attachTodoFilter(select) {
+    var key = select.getAttribute("data-todo-filter");
+    var scope = document.querySelector('[data-todo-filtered="' + key + '"]');
+    var count = document.querySelector('[data-todo-count="' + key + '"]');
+    var storeKey = "pauseia:todo-filter:" + key;
+    if (!scope) { select.hidden = true; return; }
+
+    function apply() {
+      var who = select.value, shown = 0;
+      scope.querySelectorAll("[data-todo-block]").forEach(function (block) {
+        var inBlock = 0;
+        block.querySelectorAll("[data-by]").forEach(function (item) {
+          var by = item.getAttribute("data-by");
+          var names = by ? by.split(",").map(function (n) { return n.trim(); }) : [];
+          var on = !who ||
+            (who === "__anyone__" ? names.length === 0 : names.indexOf(who) !== -1);
+          item.hidden = !on;
+          if (on) inBlock++;
+        });
+        block.hidden = !inBlock;
+        shown += inBlock;
+      });
+      if (count) count.textContent = shown;
+      var empty = scope.querySelector("[data-todo-empty]");
+      if (empty) empty.hidden = shown > 0;
+    }
+
+    try {
+      var saved = window.localStorage.getItem(storeKey);
+      if (saved) {
+        select.value = saved;
+        if (select.value !== saved) select.value = "";
+      }
+    } catch (e) { /* no storage — show everything */ }
+    select.addEventListener("change", function () {
+      try { window.localStorage.setItem(storeKey, select.value); } catch (e) {}
+      apply();
+    });
+    apply();
   }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -660,9 +828,6 @@
       .querySelectorAll("[data-genre-filter]")
       .forEach(attachGenreFilter);
     document
-      .querySelectorAll("[data-people-form]")
-      .forEach(attachPeopleForm);
-    document
       .querySelectorAll("form[data-autosave]")
       .forEach(attachAutosave);
     document
@@ -677,5 +842,14 @@
     document
       .querySelectorAll("[data-follow-up-from]")
       .forEach(attachFollowUp);
+    document
+      .querySelectorAll("[data-split-form]")
+      .forEach(attachSplitForm);
+    document
+      .querySelectorAll("[data-todo-filter]")
+      .forEach(attachTodoFilter);
+    document
+      .querySelectorAll("[data-split-preview]")
+      .forEach(attachSplitPreview);
   });
 })();

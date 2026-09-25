@@ -35,6 +35,10 @@
       <label>Position sur PauseIA</label>
       <p>{{ p['stance'] }}</p>
     </div>
+    <div class="field">
+      <label>A signé la déclaration de PauseIA</label>
+      <p>{{ 'Oui' if p['signed_declaration'] else 'Non' }}</p>
+    </div>
   </div>
 
   <div class="grid-2">

@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-head">
   <h1>Déclarer un courriel</h1>
-  <a class="btn btn-ghost" href="{{ url_for('declarer') }}">Annuler</a>
+  <a class="btn" href="{{ url_for('declarer') }}">Annuler</a>
 </div>
 
 <form class="card form" method="post" enctype="multipart/form-data"
@@ -18,9 +18,9 @@
     <div class="depute-picker">
       <label for="person_picker">Ajouter une personne depuis la liste</label>
       <select id="person_picker" data-target="proposed_people">
-        <option value="">— Choisir une personne —</option>
+        <option value="">Choisir une personne</option>
         {% for p in people %}
-        <option value="{{ p['name'] }}">{{ p['name'] }} — {{ p['role'] }}</option>
+        <option value="{{ p['name'] }}">{{ p['name'] }}{% if p['role'] %} · {{ p['role'] }}{% endif %}</option>
         {% endfor %}
       </select>
     </div>
@@ -82,7 +82,7 @@
            placeholder="JJ/MM/AAAA"
            data-follow-up-from="mail_date" data-follow-up-days="{{ follow_up_days['mail'] }}"
            value="{{ (form.get('follow_up_date') or default_follow_up('mail', form.get('mail_date') or today)) | fr_date }}">
-    <p class="hint">Pré-remplie à {{ follow_up_days['mail'] }} jours après le courriel —
+    <p class="hint">Pré-remplie à {{ follow_up_days['mail'] }} jours après le courriel :
       corrigez-la, ou videz le champ s'il n'y a pas lieu de relancer.</p>
   </div>
 
@@ -91,7 +91,7 @@
     <input type="file" id="document" name="document"
            accept=".pdf,.docx,.odt,.txt">
     <p class="hint">Copie du courriel, pièce jointe… Formats acceptés :
-      .pdf, .docx, .odt, .txt — jusqu'à 10&nbsp;Mo.</p>
+      .pdf, .docx, .odt, .txt (jusqu'à 10&nbsp;Mo).</p>
   </div>
 
   <div class="field">
@@ -114,7 +114,7 @@
 
   <div class="actions">
     <button class="btn btn-primary" type="submit">Transmettre</button>
-    <a class="btn btn-ghost" href="{{ url_for('declarer') }}">Annuler</a>
+    <a class="btn" href="{{ url_for('declarer') }}">Annuler</a>
   </div>
 </form>
 

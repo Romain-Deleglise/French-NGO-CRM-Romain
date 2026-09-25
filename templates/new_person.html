@@ -50,6 +50,14 @@
         {% endfor %}
       </select>
     </div>
+
+    <div class="field">
+      <label for="signed_declaration">A signé la déclaration de PauseIA <span class="req">*</span></label>
+      <select id="signed_declaration" name="signed_declaration" required>
+        <option value="0">Non</option>
+        <option value="1" {% if form.get('signed_declaration')|string == '1' %}selected{% endif %}>Oui</option>
+      </select>
+    </div>
   </div>
 
   {# One checklist per type de contact — and, for a religieux·se, one per

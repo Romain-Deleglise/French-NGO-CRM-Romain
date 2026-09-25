@@ -3,7 +3,7 @@
 {% block title %}Rencontre · {{ m['meeting_date'] | fr_date }}{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Rencontre — {{ m['meeting_date'] | fr_date }}{% if m['meeting_time'] %} à {{ m['meeting_time'] }}{% endif %}
+  <h1>Rencontre du {{ m['meeting_date'] | fr_date }}{% if m['meeting_time'] %} à {{ m['meeting_time'] }}{% endif %}
     {% if m['alt_dates'] %}<span class="tag tag-tentative">date à confirmer</span>{% endif %}</h1>
   <span class="head-actions">
     <a class="btn btn-primary" href="{{ url_for('edit_meeting', meeting_id=m['id']) }}">Modifier</a>

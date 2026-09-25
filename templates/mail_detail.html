@@ -3,7 +3,7 @@
 {% block title %}Courriel · {{ x['mail_date'] | fr_date }}{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Courriel — {{ x['mail_date'] | fr_date }}</h1>
+  <h1>Courriel du {{ x['mail_date'] | fr_date }}</h1>
   <span class="head-actions">
     <a class="btn btn-primary" href="{{ url_for('edit_mail', mail_id=x['id']) }}">Modifier</a>
     <a class="btn btn-ghost" href="{{ url_for('mails') }}">Retour</a>
