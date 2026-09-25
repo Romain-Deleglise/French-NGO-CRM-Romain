@@ -9,6 +9,7 @@
 <nav class="subtabs">
   <a class="subtab active" href="{{ url_for('exchanges') }}">Échanges</a>
   <a class="subtab" href="{{ url_for('members') }}">Membres</a>
+  <a class="subtab" href="{{ url_for('unlinked') }}">À rattacher{% if unlinked_count %} <span class="badge">{{ unlinked_count }}</span>{% endif %}</a>
   <a class="subtab" href="{{ url_for('mails') }}">Tous les courriels</a>
 </nav>
 
@@ -16,22 +17,41 @@
 
 <form class="search" method="get" action="{{ url_for('exchanges') }}">
   <input type="search" name="q" value="{{ q }}"
-         placeholder="Rechercher (objet, élu·e, membre)…">
-  <select name="type">
-    <option value="">Tous les types</option>
-    <option value="membre"  {{ 'selected' if typ == 'membre' }}>Membres ↔ élu·es</option>
-    <option value="citoyen" {{ 'selected' if typ == 'citoyen' }}>Citoyens → élu·es</option>
+         placeholder="Rechercher (objet, interlocuteur, membre)…">
+  <select name="type" title="Qui a écrit">
+    <option value="">Toutes origines</option>
+    <option value="membre"  {{ 'selected' if typ == 'membre' }}>Échanges d'un membre</option>
+    <option value="citoyen" {{ 'selected' if typ == 'citoyen' }}>Campagne citoyenne</option>
     <option value="autre"   {{ 'selected' if typ == 'autre' }}>Autres</option>
   </select>
+  <select name="kind" title="Avec qui">
+    <option value="">Tous les interlocuteurs</option>
+    {% for t in contact_types %}
+    <option value="{{ t }}" {{ 'selected' if kind == t }}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <select name="me" title="Ne montrer que vos échanges">
+    <option value="">Tout le monde</option>
+    {% for m in members_list %}
+    <option value="{{ m['id'] }}" {{ 'selected' if me == m['id']|string }}>{{ m['name'] }}</option>
+    {% endfor %}
+  </select>
   <button class="btn" type="submit">Filtrer</button>
-  {% if q or typ %}<a class="btn btn-ghost" href="{{ url_for('exchanges') }}">Effacer</a>{% endif %}
+  {% if q or typ or kind or me %}
+  <a class="btn btn-ghost" href="{{ url_for('exchanges', me='') }}">Effacer</a>{% endif %}
 </form>
+
+{% if me_name %}
+<p class="hint">Vous ne voyez que les échanges de <strong>{{ me_name }}</strong>.
+  Ce choix est mémorisé sur ce navigateur ; il ne masque rien à personne —
+  l'application n'a qu'un seul mot de passe, partagé.</p>
+{% endif %}
 
 {% if conversations %}
 <div class="table-wrap">
   <table class="meetings">
     <thead>
-      <tr><th>Date</th><th>Type</th><th>Interlocuteurs</th><th>Objet</th><th>Doc</th></tr>
+      <tr><th>Date</th><th>Origine</th><th>Interlocuteurs</th><th>Objet</th><th>Doc</th></tr>
     </thead>
     <tbody>
       {% for c in conversations %}
@@ -44,6 +64,9 @@
         </td>
         <td class="nowrap">
           {{ c['elus']|join(', ') }}
+          {% if c['kind'] and c['kind'] not in ('—', 'plusieurs') %}
+          <span class="muted">({{ c['kind'] }})</span>
+          {% endif %}
           {% if c['members'] %}<span class="muted">· {{ c['members']|join(', ') }}</span>{% endif %}
         </td>
         <td class="summary-cell">

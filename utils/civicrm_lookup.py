@@ -131,6 +131,11 @@ def ensure_civicrm_tables(db):
         -- One row per external address the mail import could not match. 'pending'
         -- is waiting for a CiviCRM lookup, 'resolved' got a fiche, 'absent' means
         -- CiviCRM doesn't know it either (kept, so we stop asking every night).
+        -- 'ignored' is set from /echanges/a-rattacher when a human says this is
+        -- no one we follow — a robot, a supplier, a personal mail. No script
+        -- here ever sets or revisits it: --retry-absent touches 'absent' only,
+        -- and enqueue() updates the counters without ever rewriting the status,
+        -- so a human decision is never undone by the nightly sweep.
         CREATE TABLE IF NOT EXISTS civicrm_pending (
             email       TEXT PRIMARY KEY,
             display     TEXT,

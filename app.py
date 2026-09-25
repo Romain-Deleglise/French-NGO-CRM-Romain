@@ -41,6 +41,7 @@ from flask import (
     abort,
     flash,
     g,
+    make_response,
     redirect,
     render_template,
     request,
@@ -815,8 +816,15 @@ def inject_import_state():
     for anonymous visitors, who see the public declaration forms only.
     """
     if not session.get("authenticated"):
-        return {"import_state": None}
-    return {"import_state": import_status(get_db())}
+        return {"import_state": None, "unlinked_count": 0}
+    db = get_db()
+    try:
+        waiting = db.execute(
+            "SELECT COUNT(*) FROM civicrm_pending WHERE status IN ('pending', "
+            "'absent')").fetchone()[0]
+    except sqlite3.Error:
+        waiting = 0
+    return {"import_state": import_status(db), "unlinked_count": waiting}
 
 
 # The member import runs every 10 minutes. Beyond this, three runs in a row have
@@ -1192,6 +1200,32 @@ def _init_db_locked():
         );
         CREATE INDEX IF NOT EXISTS idx_import_runs_script
             ON import_runs (script, started_at DESC);
+
+        -- The addresses the mail import could not attach to anyone, and the
+        -- other addresses a person is known by. Canonical definitions live in
+        -- utils/civicrm_lookup.ensure_civicrm_tables() (kept identical);
+        -- declared here because /echanges/a-rattacher reads and writes them,
+        -- and the app may well start before any script has run.
+        --   pending  — waiting for a lookup      absent  — CiviCRM doesn't know it
+        --   resolved — attached to a fiche       ignored — a human said "not a person"
+        CREATE TABLE IF NOT EXISTS civicrm_pending (
+            email       TEXT PRIMARY KEY,
+            display     TEXT,
+            first_seen  TEXT NOT NULL,
+            last_seen   TEXT NOT NULL,
+            seen_count  INTEGER NOT NULL DEFAULT 1,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            resolved_at TEXT,
+            person_id   INTEGER REFERENCES persons(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_civicrm_pending_status
+            ON civicrm_pending(status);
+        CREATE TABLE IF NOT EXISTS person_emails (
+            email      TEXT PRIMARY KEY,
+            person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            source     TEXT,
+            created_at TEXT NOT NULL
+        );
 
         -- Staging tables. Anonymous users (no password) submit drafts here via
         -- the "Déclarer une activité" forms. A certified user reviews them on the
@@ -5002,11 +5036,15 @@ def _conversation_groups(db, mails):
     qm = ",".join("?" * len(ids))
     tkey = {r[0]: r[1] for r in db.execute(
         f"SELECT mail_id, thread_key FROM mail_thread WHERE mail_id IN ({qm})", ids)}
-    elus, membs = {}, {}
-    for mid, name in db.execute(
-        f"SELECT xp.mail_id, p.name FROM mail_persons xp JOIN persons p "
-        f"ON p.id = xp.person_id WHERE xp.mail_id IN ({qm})", ids):
+    elus, membs, kinds = {}, {}, {}
+    # The counterpart's own type, so the list can say "Journaliste" where it used
+    # to say "élu·e" for everybody. Since the press CRM was merged in, half of
+    # these conversations are with journalists.
+    for mid, name, ctype in db.execute(
+        f"SELECT xp.mail_id, p.name, p.contact_type FROM mail_persons xp "
+        f"JOIN persons p ON p.id = xp.person_id WHERE xp.mail_id IN ({qm})", ids):
         elus.setdefault(mid, []).append(name)
+        kinds.setdefault(mid, set()).add(ctype)
     for mid, name in db.execute(
         f"SELECT mm.mail_id, COALESCE(m.name, m.email) FROM mail_members mm "
         f"JOIN members m ON m.id = mm.member_id WHERE mm.mail_id IN ({qm})", ids):
@@ -5018,6 +5056,7 @@ def _conversation_groups(db, mails):
         g = groups.get(key)
         if g is None:
             g = {"key": key, "count": 0, "last_date": m["mail_date"],
+                 "kinds": set(),
                  # The Objet is the mail's real subject line. Older rows and
                  # anything imported before the column existed have none, so
                  # they keep falling back to the body.
@@ -5031,15 +5070,21 @@ def _conversation_groups(db, mails):
             g["last_date"] = m["mail_date"]
             g["subject"] = m["subject"] or m["summary"]
         g["elus"].update(elus.get(m["id"], []))
+        g["kinds"].update(kinds.get(m["id"], set()))
         g["members"].update(membs.get(m["id"], []))
         g["directions"].add(m["direction"])
         if m["document_stored_name"]:
             g["has_doc"] = True
     convs = [groups[k] for k in order]
     for g in convs:
+        # Two independent questions, and the list used to answer only the first:
+        # who wrote (a member, an anonymous citizen) and who was written to (an
+        # élu·e, a journalist). A press exchange showed up as plain "Membre".
         g["type"] = ("membre" if g["members"]
                      else "citoyen" if g["subject"].startswith("Mail d'un citoyen")
                      else "autre")
+        g["kind"] = (g["kinds"].copy() or {"—"}).pop() if len(g["kinds"]) == 1 \
+            else ("plusieurs" if g["kinds"] else "—")
     return convs
 
 
@@ -5053,15 +5098,39 @@ def exchanges():
         "SELECT id, mail_date, direction, subject, summary, document_stored_name "
         "FROM mails ORDER BY mail_date DESC, id DESC"
     ).fetchall()
+    kind = request.args.get("kind") or ""
+    # "Je suis…" — whose exchanges to show. Remembered in a cookie because the
+    # application has no per-user login (one shared password), so this is a
+    # convenience, NOT a permission: everything stays visible to everyone, and
+    # the interface must not pretend otherwise.
+    me = request.args.get("me")
+    if me is None:
+        me = request.cookies.get("crm_me") or ""
     convs = _conversation_groups(db, mails)
     if typ in ("membre", "citoyen", "autre"):
         convs = [c for c in convs if c["type"] == typ]
+    if kind:
+        convs = [c for c in convs if kind in c["kinds"]]
+    members_list = db.execute(
+        "SELECT id, COALESCE(name, email) AS name FROM members "
+        "ORDER BY name COLLATE NOCASE").fetchall()
+    me_name = next((m["name"] for m in members_list if str(m["id"]) == me), None)
+    if me_name:
+        convs = [c for c in convs if me_name in c["members"]]
     if q:
         ql = q.lower()
         convs = [c for c in convs if ql in c["subject"].lower()
                  or any(ql in n.lower() for n in c["elus"] | c["members"])]
-    return render_template("exchanges.html", conversations=convs, q=q, typ=typ,
-                           directions=MAIL_DIRECTIONS)
+    response = make_response(render_template(
+        "exchanges.html", conversations=convs, q=q, typ=typ, kind=kind,
+        contact_types=CONTACT_TYPES, members_list=members_list, me=me,
+        me_name=me_name, directions=MAIL_DIRECTIONS))
+    if request.args.get("me") is not None:
+        # A year, and no personal data in it: a members.id this browser chose.
+        response.set_cookie("crm_me", me, max_age=31536000, samesite="Lax",
+                            httponly=True,
+                            secure=bool(os.environ.get("PRODUCTION")))
+    return response
 
 
 @app.route("/echanges/fil")
@@ -5088,6 +5157,108 @@ def conversation(key=None):
         abort(404)
     return render_template("conversation.html", mails=mails,
                            directions=MAIL_DIRECTIONS)
+
+
+# --------------------------------------------------------------------------- #
+# Échanges à rattacher: the queue, out of the CLI and into the interface
+# --------------------------------------------------------------------------- #
+
+UNLINKED_STATUSES = ("pending", "absent")
+
+
+@app.route("/echanges/a-rattacher")
+@login_required
+def unlinked():
+    """Addresses the import saw but could not attach to anybody.
+
+    This queue already existed — `civicrm_pending`, filled by the member import
+    and emptied by the CiviCRM sync — but only a script could read it. So the one
+    place holding the answer to "why isn't my exchange here?" was a command line.
+    A member who cannot find their exchange now sees it waiting, and can say who
+    it is without anyone touching the server.
+    """
+    db = get_db()
+    try:
+        rows = db.execute(
+            """
+            SELECT email, display, first_seen, last_seen, seen_count, status
+              FROM civicrm_pending
+             WHERE status IN (?, ?)
+             ORDER BY seen_count DESC, last_seen DESC
+            """, UNLINKED_STATUSES).fetchall()
+    except sqlite3.Error:
+        rows = []                      # queue not created yet: nothing to show
+    people = db.execute(
+        "SELECT id, name, contact_type FROM persons ORDER BY name COLLATE NOCASE"
+    ).fetchall()
+    return render_template("unlinked.html", rows=rows, people=people)
+
+
+@app.route("/echanges/a-rattacher/lier", methods=["POST"])
+@login_required
+def unlinked_link():
+    """Say whose address this is. The mails follow on the next sweep.
+
+    Recording it in `person_emails` rather than overwriting `persons.email` is
+    deliberate: someone writes from several addresses, and the one they happened
+    to use here is not necessarily their main one. This is exactly what the
+    import already learns by itself from a mail thread — done by hand.
+    """
+    db = get_db()
+    address = (request.form.get("email") or "").strip().lower()
+    person_id = request.form.get("person_id") or ""
+    if not address or not person_id.isdigit():
+        flash("Indiquez l'adresse et la personne à qui la rattacher.", "error")
+        return redirect(url_for("unlinked"))
+    person = db.execute(
+        "SELECT name FROM persons WHERE id = ?", (int(person_id),)).fetchone()
+    if person is None:
+        abort(404)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    db.execute(
+        "INSERT OR IGNORE INTO person_emails (email, person_id, source, created_at)"
+        " VALUES (?, ?, 'interface', ?)", (address, int(person_id), now))
+    db.execute(
+        "UPDATE civicrm_pending SET status = 'resolved', resolved_at = ?, "
+        "person_id = ? WHERE email = ?", (now, int(person_id), address))
+    db.commit()
+    flash(f"{address} rattachée à {person['name']}. Les courriels concernés "
+          f"seront rattachés au prochain import (moins de 10 minutes).", "success")
+    return redirect(url_for("unlinked"))
+
+
+@app.route("/echanges/a-rattacher/ignorer", methods=["POST"])
+@login_required
+def unlinked_ignore():
+    """Not a person we follow — a robot, a supplier, a personal mail.
+
+    'ignored' is a fourth status the scripts never set and never revisit, so the
+    queue stays a list of real questions instead of growing into noise nobody
+    reads. Reversible: « Réexaminer » puts it back.
+    """
+    db = get_db()
+    address = (request.form.get("email") or "").strip().lower()
+    target = "pending" if request.form.get("undo") else "ignored"
+    db.execute("UPDATE civicrm_pending SET status = ? WHERE email = ?",
+               (target, address))
+    db.commit()
+    flash(f"{address} : {'remise en file' if target == 'pending' else 'ignorée'}.",
+          "success")
+    return redirect(url_for("unlinked", ignorees=1 if target == "ignored" else None))
+
+
+@app.route("/echanges/a-rattacher/ignorees")
+@login_required
+def unlinked_ignored():
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT email, display, first_seen, last_seen, seen_count, status "
+            "FROM civicrm_pending WHERE status = 'ignored' "
+            "ORDER BY seen_count DESC, last_seen DESC").fetchall()
+    except sqlite3.Error:
+        rows = []
+    return render_template("unlinked.html", rows=rows, people=[], ignored=True)
 
 
 @app.route("/mails/uploads/<int:mail_id>")

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% from "_macros.html" import import_banner %}
+{% block title %}Échanges à rattacher{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Suivi des échanges</h1>
+</div>
+
+<nav class="subtabs">
+  <a class="subtab" href="{{ url_for('exchanges') }}">Échanges</a>
+  <a class="subtab" href="{{ url_for('members') }}">Membres</a>
+  <a class="subtab{{ ' active' if not ignored }}" href="{{ url_for('unlinked') }}">À rattacher{% if unlinked_count %} <span class="badge">{{ unlinked_count }}</span>{% endif %}</a>
+  <a class="subtab" href="{{ url_for('mails') }}">Tous les courriels</a>
+</nav>
+
+{{ import_banner(import_state) }}
+
+{% if ignored %}
+<p class="muted">Adresses écartées à la main : elles ne sont plus proposées au
+  rattachement et aucun script ne les réexamine.
+  <a href="{{ url_for('unlinked') }}">Revenir à la file</a></p>
+{% else %}
+<p class="muted">Des courriels ont été échangés avec ces adresses, mais
+  l'application n'a pas su à qui les rattacher — elles n'ont de fiche ni ici ni
+  dans CiviCRM. <strong>C'est ici qu'il faut chercher un échange qui n'apparaît
+  pas dans la liste.</strong> Dites de qui il s'agit et les courriels concernés
+  seront rattachés au prochain import.
+  <a href="{{ url_for('unlinked_ignored') }}">Voir les adresses ignorées</a></p>
+{% endif %}
+
+{% if rows %}
+<div class="table-wrap">
+  <table class="meetings">
+    <thead>
+      <tr>
+        <th>Adresse</th><th>Nom affiché</th><th>Courriels</th>
+        <th>Dernier</th><th>État</th><th>Rattacher à</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="nowrap"><strong>{{ r['email'] }}</strong></td>
+        <td>{{ r['display'] or '—' }}</td>
+        <td class="nowrap">{{ r['seen_count'] }}</td>
+        <td class="nowrap">{{ r['last_seen'][:10] | fr_date }}</td>
+        <td class="nowrap">
+          {% if r['status'] == 'absent' %}
+            <span class="muted" title="CiviCRM ne connaît pas cette adresse non plus">Inconnue de CiviCRM</span>
+          {% elif r['status'] == 'ignored' %}
+            <span class="muted">Ignorée</span>
+          {% else %}
+            <span class="muted">En attente</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if ignored %}
+          <form method="post" action="{{ url_for('unlinked_ignore') }}">
+            <input type="hidden" name="email" value="{{ r['email'] }}">
+            <input type="hidden" name="undo" value="1">
+            <button class="btn btn-ghost" type="submit">Réexaminer</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ url_for('unlinked_link') }}" class="inline-form">
+            <input type="hidden" name="email" value="{{ r['email'] }}">
+            <select name="person_id" required>
+              <option value="">Choisir une personne…</option>
+              {% for p in people %}
+              <option value="{{ p['id'] }}">{{ p['name'] }} · {{ p['contact_type'] }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn" type="submit">Rattacher</button>
+          </form>
+          <form method="post" action="{{ url_for('unlinked_ignore') }}" class="inline-form">
+            <input type="hidden" name="email" value="{{ r['email'] }}">
+            <button class="btn btn-ghost" type="submit"
+                    title="Ni un élu, ni un journaliste : un robot, un prestataire, un courriel personnel">Ignorer</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="muted count">{{ rows|length }} adresse{{ '' if rows|length == 1 else 's' }}</p>
+{% if not ignored %}
+<p class="hint">Si la personne n'a pas encore de fiche,
+  <a href="{{ url_for('new_person') }}">créez-la d'abord</a>, puis revenez ici la
+  choisir dans la liste.</p>
+{% endif %}
+{% else %}
+<div class="empty">
+  <p>{% if ignored %}Aucune adresse ignorée.{% else %}Aucune adresse en attente :
+     tous les courriels importés ont trouvé leur destinataire.{% endif %}</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -9,6 +9,7 @@ like no run at all) and that the banner states the right one of three states.
 """
 import os
 import sqlite3
+import tempfile
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -76,7 +77,10 @@ class FreshnessTests(unittest.TestCase):
     """`import_status` is what the banner says. Three states, no others."""
 
     def setUp(self):
-        os.environ["CRM_DB_PATH"] = ":memory:"
+        # A temp file rather than ":memory:": `app` is imported once per test
+        # run and freezes DB_PATH, so a module that pins it to memory would
+        # leave every later test with a database each connection creates anew.
+        os.environ.setdefault("CRM_DB_PATH", tempfile.mkstemp(suffix=".db")[1])
         import app                                   # noqa: PLC0415
         self.app = app
         self.db = sqlite3.connect(":memory:")

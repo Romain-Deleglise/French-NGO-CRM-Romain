@@ -61,11 +61,30 @@ Interventions · Contenus · Modération · Utilisateurices.
 - **Suivi des échanges** (`/echanges`) : vue unifiée type boîte mail (citoyens +
   membres + élu·es), fils regroupés, sous-onglets *Échanges · Membres · Tous les
   courriels*. Détail d'un fil = `conversation.html` (cartes expéditeur→destinataires).
-  Les trois pages portent un **bandeau de fraîcheur** (macro `import_banner`) :
+  Quatre sous-onglets depuis le chantier interface : *Échanges · Membres ·
+  **À rattacher** · Tous les courriels*.
+  Les quatre pages portent un **bandeau de fraîcheur** (macro `import_banner`) :
   « Dernière synchronisation il y a 4 minutes » en vert, l'avertissement en
   orange au-delà de 30 min (trois créneaux manqués), en rouge si le dernier
   import a échoué. Répond à « mon échange est-il enregistré, ou faut-il
   attendre ? » sans demander de faire confiance.
+- **`/echanges/a-rattacher`** : `civicrm_pending` sorti de la ligne de commande.
+  Les adresses que l'import n'a pas su rattacher, avec le nombre de courriels
+  concernés ; « Rattacher à » écrit un alias dans `person_emails` (jamais dans
+  `persons.email` : on écrit depuis plusieurs adresses, celle vue ici n'est pas
+  forcément la principale) et le prochain import rattache les courriels.
+  « Ignorer » pose le statut **`ignored`**, qu'aucun script ne réexamine —
+  `--retry-absent` ne touche qu'`absent` et `enqueue()` ne réécrit jamais le
+  statut, donc une décision humaine n'est jamais défaite par la synchro de nuit.
+  Compteur dans l'onglet. **C'est là qu'il faut chercher un échange qui
+  n'apparaît pas.**
+- **Filtres** : l'origine (membre / campagne citoyenne) **et** le type
+  d'interlocuteur (`contact_type`) sont deux questions distinctes — avant la
+  fusion presse, un échange avec un journaliste s'affichait « Membre » sans plus.
+  Un sélecteur « Je suis… » mémorise un `members.id` en cookie pour ne montrer
+  que ses propres échanges : c'est un confort, **pas une permission** (un seul
+  mot de passe partagé, tout reste visible de tout le monde), et l'interface le
+  dit explicitement.
 - Les listes filtrent par `contact_type` ; badge « Non élu·e actuellement » quand
   `in_office = 0`.
 

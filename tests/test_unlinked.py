@@ -1,0 +1,132 @@
+"""Cover the queue once it became an interface: /echanges/a-rattacher.
+
+`civicrm_pending` has always existed, but only a script could read it — so the
+one place holding the answer to "why isn't my exchange here?" was a command
+line. These tests pin what the page promises: the waiting addresses are shown,
+saying who someone is records an alias (never overwrites their main address),
+and a human's "ignore" survives the nightly scripts.
+"""
+import os
+import sqlite3
+import sys
+import tempfile
+import unittest
+from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "utils"))
+
+NOW = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class UnlinkedPageTests(unittest.TestCase):
+    def setUp(self):
+        os.environ.setdefault("CRM_DB_PATH", tempfile.mkstemp(suffix=".db")[1])
+        os.environ["APP_PASSWORD"] = "x"
+        import app                                   # noqa: PLC0415
+        self.app = app
+        app.init_db()
+        # Whichever test module imported `app` first decided the path; work on
+        # that one, and start from a clean slate rather than assuming an
+        # untouched file.
+        path = str(app.DB_PATH)
+        self.client = app.app.test_client()
+        with self.client.session_transaction() as sess:
+            sess["authenticated"] = True
+        self.db = sqlite3.connect(path)
+        self.addCleanup(self.db.close)
+        for table in ("person_emails", "civicrm_pending", "mail_members",
+                      "mail_persons", "mails", "members", "persons"):
+            self.db.execute(f"DELETE FROM {table}")
+        # AUTOINCREMENT does not reset when rows are deleted, so never assume 1.
+        self.person_id = self.db.execute(
+            "INSERT INTO persons (name, contact_type, stance, email, created_at) "
+            "VALUES ('Marie Rondel', 'Journaliste', 'Inconnue', "
+            "'marie.rondel@tokamak.fr', ?)", (NOW,)).lastrowid
+        self.db.execute(
+            "INSERT INTO civicrm_pending (email, display, first_seen, last_seen, "
+            "seen_count, status) VALUES ('m.rondel@tokamak.fr', 'm.rondel', ?, ?, "
+            "80, 'absent')", (NOW, NOW))
+        self.db.commit()
+
+    def _pending(self, address="m.rondel@tokamak.fr"):
+        return self.db.execute(
+            "SELECT status, person_id FROM civicrm_pending WHERE email = ?",
+            (address,)).fetchone()
+
+    def test_the_waiting_addresses_are_listed_with_their_weight(self):
+        html = self.client.get("/echanges/a-rattacher").get_data(as_text=True)
+        self.assertIn("m.rondel@tokamak.fr", html)
+        self.assertIn("80", html)                       # 80 courriels concernés
+        self.assertIn("Inconnue de CiviCRM", html)
+
+    def test_linking_records_an_alias_and_leaves_the_main_address_alone(self):
+        self.client.post("/echanges/a-rattacher/lier",
+                         data={"email": "m.rondel@tokamak.fr", "person_id": str(self.person_id)})
+        self.assertEqual(self._pending(), ("resolved", self.person_id))
+        self.assertEqual(
+            self.db.execute("SELECT email, person_id, source FROM person_emails")
+            .fetchone(),
+            ("m.rondel@tokamak.fr", self.person_id, "interface"))
+        # Someone writes from several addresses; the one seen here is not
+        # necessarily the one to write back to.
+        self.assertEqual(
+            self.db.execute("SELECT email FROM persons WHERE id = ?",
+                            (self.person_id,)).fetchone()[0],
+            "marie.rondel@tokamak.fr")
+
+    def test_a_linked_address_leaves_the_queue(self):
+        self.client.post("/echanges/a-rattacher/lier",
+                         data={"email": "m.rondel@tokamak.fr", "person_id": str(self.person_id)})
+        html = self.client.get("/echanges/a-rattacher").get_data(as_text=True)
+        # NB: the address still shows in the confirmation flash — what must be
+        # gone is the row, so assert on the list being empty.
+        self.assertIn("Aucune adresse en attente", html)
+        self.assertNotIn("Rattacher</button>", html)
+
+    def test_linking_to_nobody_is_refused_rather_than_guessed(self):
+        self.client.post("/echanges/a-rattacher/lier",
+                         data={"email": "m.rondel@tokamak.fr", "person_id": ""})
+        self.assertEqual(self._pending()[0], "absent")
+
+    def test_an_unknown_person_is_a_404_not_a_dangling_alias(self):
+        response = self.client.post(
+            "/echanges/a-rattacher/lier",
+            data={"email": "m.rondel@tokamak.fr", "person_id": "999"})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM person_emails").fetchone()[0], 0)
+
+    def test_ignoring_moves_it_out_of_the_way_and_is_reversible(self):
+        self.client.post("/echanges/a-rattacher/ignorer",
+                         data={"email": "m.rondel@tokamak.fr"})
+        self.assertEqual(self._pending()[0], "ignored")
+        html = self.client.get("/echanges/a-rattacher/ignorees").get_data(as_text=True)
+        self.assertIn("m.rondel@tokamak.fr", html)
+        self.client.post("/echanges/a-rattacher/ignorer",
+                         data={"email": "m.rondel@tokamak.fr", "undo": "1"})
+        self.assertEqual(self._pending()[0], "pending")
+
+    def test_a_human_ignore_survives_the_nightly_scripts(self):
+        # The whole point of a fourth status: --retry-absent revives 'absent',
+        # and the import keeps counting sightings, but neither may undo a
+        # decision someone took in the interface.
+        import civicrm_lookup as cl                    # noqa: PLC0415
+        self.client.post("/echanges/a-rattacher/ignorer",
+                         data={"email": "m.rondel@tokamak.fr"})
+        cl.cmd_retry_absent(self.db, type("A", (), {"commit": True})())
+        cl.enqueue(self.db, "m.rondel@tokamak.fr", "m.rondel", NOW)
+        self.db.commit()
+        self.assertEqual(self._pending()[0], "ignored")
+        self.assertEqual(self.db.execute(
+            "SELECT seen_count FROM civicrm_pending WHERE email = ?",
+            ("m.rondel@tokamak.fr",)).fetchone()[0], 81)
+
+    def test_the_queue_is_counted_in_the_tab(self):
+        html = self.client.get("/echanges").get_data(as_text=True)
+        self.assertIn("À rattacher", html)
+        self.assertIn('<span class="badge">1</span>', html)
+
+
+if __name__ == "__main__":
+    unittest.main()
