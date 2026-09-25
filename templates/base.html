@@ -35,7 +35,9 @@
     </nav>
   </header>
 
-  <main class="container">
+  {# Les pages denses (un tableau qui porte aussi une action) élargissent le
+     gabarit : à 960 px la colonne d'action sortait de sa carte. #}
+  <main class="container {% block container_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="flashes">

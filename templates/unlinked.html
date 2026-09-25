@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import import_banner %}
 {% block title %}Échanges à rattacher{% endblock %}
+{% block container_class %}container-wide{% endblock %}
 {% block content %}
 <div class="page-head">
   <h1>Suivi des échanges</h1>
@@ -30,21 +31,21 @@
 
 {% if rows %}
 <div class="table-wrap">
-  <table class="meetings">
+  <table class="meetings table-unlinked">
     <thead>
       <tr>
-        <th>Adresse</th><th>Nom affiché</th><th>Courriels</th>
-        <th>Dernier</th><th>État</th><th>Rattacher à</th>
+        <th>Adresse</th><th class="col-secondary">Nom affiché</th><th>Courriels</th>
+        <th class="col-secondary">Dernier</th><th>État</th><th>Rattacher à</th>
       </tr>
     </thead>
     <tbody>
       {% for r in rows %}
       <tr>
-        <td class="nowrap"><strong>{{ r['email'] }}</strong></td>
-        <td>{{ r['display'] or '—' }}</td>
-        <td class="nowrap">{{ r['seen_count'] }}</td>
-        <td class="nowrap">{{ r['last_seen'][:10] | fr_date }}</td>
-        <td class="nowrap">
+        <td class="addr-cell"><strong>{{ r['email'] }}</strong></td>
+        <td class="col-secondary">{{ r['display'] or '—' }}</td>
+        <td class="nowrap" data-label="Courriels">{{ r['seen_count'] }}</td>
+        <td class="nowrap col-secondary">{{ r['last_seen'][:10] | fr_date }}</td>
+        <td class="nowrap" data-label="État">
           {% if r['status'] == 'absent' %}
             <span class="muted" title="CiviCRM ne connaît pas cette adresse non plus">Inconnue de CiviCRM</span>
           {% elif r['status'] == 'ignored' %}

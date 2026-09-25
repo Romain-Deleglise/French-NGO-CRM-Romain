@@ -91,6 +91,7 @@ a:hover { text-decoration: underline; }
 }
 
 .container { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+.container-wide { max-width: 1200px; }
 
 /* ---------- Headings ---------- */
 .page-head {
@@ -161,8 +162,14 @@ h2 { font-size: 1.2rem; margin: 2rem 0 .75rem; }
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* `overflow: hidden` clipped the rounded corners nicely and, on a phone, made
+     a wide table push the whole page sideways instead — the nav, the filters
+     and the footer all scrolled with it, and the last columns were simply
+     unreachable. The table scrolls inside its own card now. */
+  overflow-x: auto;
+  overflow-y: hidden;
   box-shadow: var(--shadow);
+  -webkit-overflow-scrolling: touch;
 }
 table.meetings { width: 100%; border-collapse: collapse; }
 table.meetings thead th {
@@ -180,10 +187,14 @@ table.meetings tbody tr:last-child td { border-bottom: 0; }
 table.meetings tbody tr { cursor: pointer; transition: background .1s; }
 table.meetings tbody tr:hover { background: var(--brand-soft); }
 .nowrap { white-space: nowrap; }
-.summary-cell {
-  max-width: 380px;
+/* The subject, shortened cleanly. The clamp used to sit on the cell itself,
+   which also held the « 4 messages » badge: the badge was dragged into the
+   clamped box and sliced in half, and a third line showed through cut across
+   the middle. Clamping the text alone, and giving the column room to breathe,
+   fixes both. */
+.summary-cell { min-width: 220px; }
+.summary-cell .subject {
   overflow: hidden;
-  text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -929,3 +940,98 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
 .import-ok    { background: #f1f8f2; border-color: #cfe6d4; color: #2f5d3a; }
 .import-stale { background: #fff8e6; border-color: #f0dca8; color: #7a5b12; }
 .import-error { background: #fdf0f0; border-color: #f0c2c2; color: #8a2b2b; }
+
+
+/* ---------- Deux formulaires côte à côte dans une cellule (/echanges/a-rattacher) */
+.inline-form { display: inline-flex; gap: .35rem; align-items: center; }
+.inline-form + .inline-form { margin-left: .35rem; }
+.inline-form select { max-width: 11rem; }
+/* Une adresse peut être très longue (t.korutos-chatam@mouvementecho.fr) : sans
+   coupure elle poussait la colonne d'action hors de la carte, y compris sur un
+   écran large — et c'est l'action qui est l'objet de la page. */
+/* `overflow-wrap: anywhere` plutôt que `word-break` : la coupure n'a lieu
+   que si la colonne est vraiment trop étroite, au lieu de couper au milieu
+   d'une adresse qui tenait. */
+.addr-cell { overflow-wrap: anywhere; min-width: 15rem; }
+
+/* ---------- Téléphone ----------
+   Vérifié au chromium à 390 px : avant ces règles, toutes les pages à tableau
+   débordaient horizontalement (jusqu'à 425 px hors écran sur /echanges), la
+   barre de navigation s'empilait en escalier contre le bord droit et les
+   filtres sortaient de l'écran. */
+@media (max-width: 720px) {
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .5rem;
+    padding: .7rem 1rem;
+    position: static;            /* un bandeau collant de 4 lignes mange l'écran */
+  }
+  .site-header nav { justify-content: flex-start; gap: .35rem .6rem; }
+  .brand { font-size: 1rem; }
+  .container { padding: 1rem; }
+
+  /* Les onglets défilent au doigt plutôt que de s'empiler en colonnes. */
+  .subtabs {
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .subtabs::-webkit-scrollbar { display: none; }
+  .subtab { flex: 0 0 auto; }
+
+  /* Les filtres l'un sous l'autre, en pleine largeur : trois sélecteurs côte à
+     côte à 390 px, personne ne peut les lire ni les toucher. */
+  .search { flex-wrap: wrap; }
+  .search input[type="search"] { flex: 1 1 100%; }
+  .search select, .search .btn { flex: 1 1 auto; }
+
+  .page-head { flex-wrap: wrap; gap: .5rem; }
+
+  /* Un tableau qui défile horizontalement cache toujours la même chose : la
+     dernière colonne, souvent la plus utile. Les colonnes d'appoint sortent
+     donc du tableau sur téléphone — l'information reste accessible en ouvrant
+     la ligne, qui est de toute façon cliquable. */
+  .col-secondary { display: none; }
+
+  /* Trois colonnes doivent tenir dans 390 px : la largeur minimale confortable
+     de l'objet (220 px) les faisait déborder à elle seule. */
+  .summary-cell { min-width: 0; }
+  table.meetings { font-size: .9rem; }
+  table.meetings thead th,
+  table.meetings tbody td { padding-left: .55rem; padding-right: .55rem; }
+  /* La pastille « 4 messages » passe sous l'objet au lieu d'être tronquée. */
+  .thread-count { display: inline-block; margin: .2rem 0 0; }
+
+  /* /echanges/a-rattacher : six colonnes ne tiennent pas, et c'est la colonne
+     d'action qui se retrouvait hors écran — sur une page dont l'action EST
+     l'objet. Chaque ligne devient une fiche empilée, le bouton en pleine
+     largeur. (Les autres tableaux gardent leurs colonnes : on y lit, on n'y
+     agit pas.) */
+  .table-unlinked, .table-unlinked tbody, .table-unlinked tr, .table-unlinked td {
+    display: block;
+    width: 100%;
+  }
+  .table-unlinked thead { display: none; }
+  .table-unlinked tr {
+    padding: .75rem .25rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .table-unlinked td { border: 0; padding: .15rem .55rem; }
+  /* `.table-unlinked td` (classe + élément) l'emporte sur `.col-secondary`
+     seule : sans cette règle, les colonnes masquées réapparaissaient une fois
+     la ligne empilée. */
+  .table-unlinked td.col-secondary { display: none; }
+  .table-unlinked td[data-label]::before {
+    content: attr(data-label) " : ";
+    color: var(--muted);
+    font-size: .85rem;
+  }
+  .inline-form { display: flex; flex-wrap: wrap; margin: .4rem 0 0; }
+  .inline-form + .inline-form { margin-left: 0; }
+  /* `min-width: 0` : sans lui un <select> refuse de descendre sous la largeur
+     de sa plus longue option et éjecte le bouton hors de l'écran. */
+  .inline-form select { max-width: none; flex: 1 1 100%; min-width: 0; }
+  .inline-form .btn { flex: 1 1 auto; }
+}

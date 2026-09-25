@@ -51,18 +51,18 @@
 <div class="table-wrap">
   <table class="meetings">
     <thead>
-      <tr><th>Date</th><th>Origine</th><th>Interlocuteurs</th><th>Objet</th><th>Doc</th></tr>
+      <tr><th>Date</th><th class="col-secondary">Origine</th><th>Interlocuteurs</th><th>Objet</th><th class="col-secondary">Doc</th></tr>
     </thead>
     <tbody>
       {% for c in conversations %}
       <tr onclick="window.location='{{ url_for('conversation', key=c['key']) }}'">
         <td class="nowrap">{{ c['last_date'] | fr_date }}</td>
-        <td class="nowrap">
+        <td class="nowrap col-secondary">
           {% if c['type'] == 'membre' %}<span class="tag tag-member">👥 Membre</span>
           {% elif c['type'] == 'citoyen' %}<span class="tag tag-citizen">Citoyen</span>
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
-        <td class="nowrap">
+        <td>
           {{ c['elus']|join(', ') }}
           {% if c['kind'] and c['kind'] not in ('—', 'plusieurs') %}
           <span class="muted">({{ c['kind'] }})</span>
@@ -70,10 +70,10 @@
           {% if c['members'] %}<span class="muted">· {{ c['members']|join(', ') }}</span>{% endif %}
         </td>
         <td class="summary-cell">
-          {{ c['subject'] }}
+          <span class="subject">{{ c['subject'] }}</span>
           {% if c['count'] > 1 %}<span class="thread-count">{{ c['count'] }} messages</span>{% endif %}
         </td>
-        <td class="nowrap">{% if c['has_doc'] %}📎{% else %}—{% endif %}</td>
+        <td class="nowrap col-secondary">{% if c['has_doc'] %}📎{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

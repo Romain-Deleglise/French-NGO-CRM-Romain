@@ -349,7 +349,7 @@
         {% if show_organisation %}<td><strong>{{ i['organisation_name'] }}</strong></td>{% endif %}
         <td>{{ i['person_names'] or '—' }}</td>
         <td class="nowrap"><span class="tag tag-intervention">{{ i['intervention_type'] }}</span></td>
-        <td class="summary-cell">{{ i['summary'] or '—' }}</td>
+        <td class="summary-cell"><span class="subject">{{ i['summary'] or '—' }}</span></td>
         <td class="nowrap">{% if i['link'] | safe_link %}<a href="{{ i['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
@@ -376,7 +376,7 @@
         {% if show_organisation %}<td><strong>{{ c['organisation_name'] }}</strong></td>{% endif %}
         <td>{{ c['person_names'] or '—' }}</td>
         <td class="nowrap"><span class="tag tag-content">{{ c['content_type'] }}</span></td>
-        <td class="summary-cell">{{ c['summary'] or '—' }}</td>
+        <td class="summary-cell"><span class="subject">{{ c['summary'] or '—' }}</span></td>
         <td class="nowrap">{% if c['link'] | safe_link %}<a href="{{ c['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
