@@ -155,8 +155,10 @@ say "4b/5  Addresses left over: try each newsroom's own convention"
 # 1b/5 over all of CiviCRM. So an address CiviCRM holds no record of can still
 # be traced to a journalist it knows BY NAME. Recognition only — nothing here
 # invents an address to write to.
+# stdout is the JSON, stderr the human summary — and stderr is NOT silenced:
+# hiding it is what let a parse failure here pass for "no convention applies".
 docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py --patterns \
-  > "$WORK/patterns.json" 2>/dev/null || echo "{}" > "$WORK/patterns.json"
+  > "$WORK/patterns.json" || echo "{}" > "$WORK/patterns.json"
 
 # Candidates are fetched BY DOMAIN, the employer name being only an extra net.
 # Asking by employer alone was the original design and it under-reached badly:

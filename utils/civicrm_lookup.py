@@ -113,6 +113,17 @@ def log(msg):
     print(msg, flush=True)
 
 
+def note(msg):
+    """A human-facing line from a command whose stdout is machine-read.
+
+    `--patterns` writes JSON that civicrm-sync.sh parses. Its summary went to
+    stdout too, which made that JSON unparseable — and the caller's `|| echo {}`
+    swallowed the failure, so step 4b silently reported "no convention applies"
+    for weeks. Anything printed alongside machine output belongs on stderr.
+    """
+    print(msg, file=sys.stderr, flush=True)
+
+
 def ensure_civicrm_tables(db):
     """The lookup queue. Created by whoever gets there first (import or resolve)."""
     db.executescript(
@@ -502,9 +513,9 @@ def cmd_patterns(db, args):
         by_template = {}
         for entry in conventions.values():
             by_template[entry["template"]] = by_template.get(entry["template"], 0) + 1
-        log(f"{len(conventions)} convention(s) apprise(s) : "
-            + ", ".join(f"{n}× {t}" for t, n in
-                        sorted(by_template.items(), key=lambda kv: -kv[1])))
+        note(f"{len(conventions)} convention(s) apprise(s) : "
+             + ", ".join(f"{n}× {t}" for t, n in
+                         sorted(by_template.items(), key=lambda kv: -kv[1])))
         return 0
 
     wanted = {}
@@ -515,9 +526,9 @@ def cmd_patterns(db, args):
         if domain in conventions:
             wanted[domain] = conventions[domain]
     print(json.dumps(wanted, ensure_ascii=False, indent=2))
-    log(f"{len(wanted)} domaine(s) utile(s) aux adresses en attente, sur "
-        f"{len(conventions)} convention(s) apprise(s). "
-        f"Utilisez --patterns --all pour les voir toutes.")
+    note(f"{len(wanted)} domaine(s) utile(s) aux adresses en attente, sur "
+         f"{len(conventions)} convention(s) apprise(s). "
+         f"Utilisez --patterns --all pour les voir toutes.")
     return 0
 
 

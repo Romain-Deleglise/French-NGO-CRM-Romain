@@ -631,3 +631,54 @@ class ApplyNamesTests(unittest.TestCase):
             "SELECT status FROM civicrm_pending WHERE email = ?",
             ("willa@godemandguide.co",)).fetchone()
         self.assertEqual(status, "pending")
+
+
+class PatternsOutputTests(unittest.TestCase):
+    """`--patterns` stdout must be JSON and nothing else.
+
+    civicrm-sync.sh pipes it into `json.load` to build the CiviCRM query. The
+    summary line used to go to stdout as well, so the parse failed and the
+    caller's `|| echo {}` turned that into a cheerful "no convention applies".
+    """
+
+    def setUp(self):
+        import learn_conventions as lc
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(
+            """
+            CREATE TABLE persons (id INTEGER PRIMARY KEY, name TEXT, email TEXT);
+            CREATE TABLE organisations (id INTEGER PRIMARY KEY, name TEXT,
+                                        org_type TEXT);
+            CREATE TABLE person_organisations (person_id INT, organisation_id INT);
+            """
+        )
+        cl.ensure_civicrm_tables(self.db)
+        lc.ensure_table(self.db)
+        lc.store(self.db, [("francetv.fr", "FRANCE 3", "prenom.nom", 2055, 0.99)],
+                 "civicrm", NOW)
+        self.addCleanup(self.db.close)
+
+    def _stdout(self, **flags):
+        import contextlib
+        import io
+        import types
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), \
+                contextlib.redirect_stderr(io.StringIO()):
+            cl.cmd_patterns(self.db, types.SimpleNamespace(**flags))
+        return buffer.getvalue()
+
+    def test_stdout_parses_as_json(self):
+        cl.enqueue(self.db, "pierre.debaudouin@francetv.fr", "", NOW)
+        import json
+        data = json.loads(self._stdout(all=False))
+        self.assertEqual(data, {"francetv.fr": {"media": "FRANCE 3",
+                                                "template": "prenom.nom"}})
+
+    def test_stdout_parses_as_json_with_all(self):
+        import json
+        self.assertIn("francetv.fr", json.loads(self._stdout(all=True)))
+
+    def test_an_empty_queue_still_yields_valid_json(self):
+        import json
+        self.assertEqual(json.loads(self._stdout(all=False)), {})
