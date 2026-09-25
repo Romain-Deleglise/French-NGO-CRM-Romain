@@ -141,6 +141,88 @@ def learned_domains(db):
             if d and d.strip().lower() not in FREEMAIL_DOMAINS}
 
 
+# --------------------------------------------------------------------------- #
+# Périmètre de la file d'attente.
+# --------------------------------------------------------------------------- #
+
+# Institutions publiques : c'est par là que passent les élu·es locaux, pour
+# lesquels il n'existe aucune source d'adresses exploitable (le RNE n'en porte
+# pas). Une adresse en mairie ou en préfecture mérite donc une fiche même si
+# personne ici ne connaît encore ce domaine.
+PUBLIC_SUFFIXES = (
+    ".gouv.fr", ".assemblee-nationale.fr", "assemblee-nationale.fr",
+    "senat.fr", "europarl.europa.eu", ".europa.eu",
+    "paris.fr", ".paris.fr",
+)
+# Préfixes des collectivités, qui n'ont pas de suffixe commun : mairie-nantes.fr,
+# ville-lyon.fr, cc-paysdegex.fr… Volontairement courte et explicite plutôt que
+# large : un faux positif fait entrer dans la file une adresse privée.
+PUBLIC_PREFIXES = ("mairie-", "ville-", "cc-", "ca-", "cu-", "agglo-",
+                   "departement-", "cd-", "region-")
+# Complétable sans toucher au code, par ex. pour une métropole au nom propre :
+#   CRM_PUBLIC_DOMAINS="grandlyon.com,nantesmetropole.fr"
+EXTRA_PUBLIC = tuple(
+    d.strip().lower()
+    for d in (os.environ.get("CRM_PUBLIC_DOMAINS") or "").split(",") if d.strip()
+)
+
+_scope = None          # domaines admis, chargés par refresh_scope()
+
+
+def is_public_institution(domain):
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return False
+    if domain in EXTRA_PUBLIC:
+        return True
+    if any(domain == s or domain.endswith(s) for s in PUBLIC_SUFFIXES):
+        return True
+    return any(domain.startswith(p) for p in PUBLIC_PREFIXES)
+
+
+def refresh_scope(db):
+    """Les domaines qu'on accepte de mettre en file, chargés une fois par run.
+
+    Seuil à UNE personne connue, et non deux comme `collect()` : il ne s'agit
+    pas ici de décider à qui appartient un domaine, seulement de savoir s'il
+    nous concerne. Une seule fiche au Figaro suffit à ce que la prochaine
+    adresse en `@lefigaro.fr` vaille la peine d'être identifiée.
+    """
+    global _scope
+    _scope = collect(db, min_persons=1)
+    return _scope
+
+
+def in_scope(address, db=None):
+    """Cette adresse mérite-t-elle d'entrer dans la file d'attente ?
+
+    La file fonctionnait par exclusion : tout ce qui n'était ni un membre, ni un
+    robot, ni une adresse générique y entrait. Or la règle Google Workspace
+    copie **toute** la correspondance externe de l'association, mails personnels
+    des membres compris : médecin, banque, famille. Tout cela atterrissait donc
+    dans une page consultable par quiconque a le mot de passe, avec le nom et
+    l'adresse de tiers qui n'ont rien demandé. C'est une collecte de données
+    personnelles sans objet, et la file serait devenue illisible par-dessus le
+    marché.
+
+    On inverse : il faut désormais une raison positive d'y entrer, à savoir un
+    domaine que l'association a une raison de suivre — un domaine déjà porté par
+    une fiche, un domaine de média attesté par CiviCRM (`mail_conventions`), ou
+    une institution publique.
+
+    Contrepartie assumée : un journaliste qui écrit depuis son gmail personnel
+    ne sera pas mis en file, parce que rien ne le distingue du médecin d'un
+    membre. Sa fiche se crée à la main, et l'adresse est apprise ensuite.
+    """
+    domain = domain_of(address)
+    if not domain or domain in FREEMAIL_DOMAINS:
+        return False
+    if is_public_institution(domain):
+        return True
+    known = _scope if _scope is not None else (collect(db, 1) if db else _known)
+    return domain in known
+
+
 def refresh(db, min_persons=MIN_PERSONS_PER_DOMAIN):
     """Load the domain list out of the database. Call once, at start-up."""
     global _known, _pattern

@@ -68,6 +68,20 @@ Interventions · Contenus · Modération · Utilisateurices.
   orange au-delà de 30 min (trois créneaux manqués), en rouge si le dernier
   import a échoué. Répond à « mon échange est-il enregistré, ou faut-il
   attendre ? » sans demander de faire confiance.
+- **Périmètre de la file (important, RGPD)** : `maildomains.in_scope()`. La file
+  fonctionnait par **exclusion** (tout ce qui n'est ni un membre, ni un robot,
+  ni une adresse générique). Or la règle Workspace copie **toute** la
+  correspondance externe de l'association, mails personnels des membres
+  compris : médecin, banque, famille finissaient dans une page consultable par
+  quiconque a le mot de passe. Il faut désormais une **raison positive**
+  d'entrer : un domaine déjà porté par **une** fiche (seuil à 1, pas 2 : il ne
+  s'agit pas de décider à qui appartient le domaine, seulement de savoir qu'il
+  nous concerne), un domaine de média attesté par CiviCRM (`mail_conventions`),
+  ou une **institution publique** (`.gouv.fr`, `mairie-*`, `senat.fr`… +
+  `CRM_PUBLIC_DOMAINS`). Jamais de messagerie grand public. Contrepartie
+  assumée : un journaliste écrivant depuis son gmail n'entre pas en file, rien
+  ne le distinguant du médecin d'un membre. `civicrm_lookup.py --prune` applique
+  la règle aux adresses déjà en file, `resolved` exclues.
 - **`/echanges/a-rattacher`** : `civicrm_pending` sorti de la ligne de commande.
   Les adresses que l'import n'a pas su rattacher, avec le nombre de courriels
   concernés ; « Rattacher à » écrit un alias dans `person_emails` (jamais dans

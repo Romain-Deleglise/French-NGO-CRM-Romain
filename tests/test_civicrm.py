@@ -258,27 +258,38 @@ class BulkMailTests(unittest.TestCase):
 
 
 class QueueFromMailTests(unittest.TestCase):
-    """What reaches the queue from a real member mail.
+    """Ce qui entre dans la file depuis un vrai courriel de membre.
 
-    The case that matters and had no test: a member writes to an address nobody
-    holds, on a média domain the CRM *does* know. That is the best possible
-    candidate for a CiviCRM lookup, and it was being skipped.
+    La file fonctionnait par exclusion : tout ce qui n'était ni un membre, ni un
+    robot, ni une adresse générique y entrait. Or la règle Workspace copie
+    **toute** la correspondance externe de l'association, mails personnels des
+    membres compris — médecin, banque, famille. Ces adresses finissaient dans
+    une page consultable par toute l'équipe.
+
+    Il faut donc désormais une raison positive d'entrer : un domaine déjà porté
+    par une fiche, un domaine de média attesté par CiviCRM, ou une institution
+    publique. Ces tests pinnent les deux côtés de la frontière.
     """
 
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
+        self.db.executescript(
+            """
+            CREATE TABLE persons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, email TEXT
+            );
+            """
+        )
         cl.ensure_civicrm_tables(self.db)
-        # Two Figaro journalists on file, so lefigaro.fr counts as known.
-        md.refresh_seed_only()
-        self._known = {"lefigaro.fr"}
-        self._real_is_known = md.is_known
-        md.is_known = lambda addr: (addr or "").lower().rsplit("@", 1)[-1] \
-            in self._known | set(md.SEED_DOMAINS)
-
-    def tearDown(self):
-        md.is_known = self._real_is_known
-        md.refresh_seed_only()
-        self.db.close()
+        # Une seule fiche au Figaro suffit : il ne s'agit pas de décider à qui
+        # appartient le domaine, seulement de savoir qu'il nous concerne.
+        self.db.execute("INSERT INTO persons (name, email) "
+                        "VALUES ('Tristan Vey', 'tvey@lefigaro.fr')")
+        self.db.commit()
+        md.refresh_scope(self.db)
+        self.addCleanup(md.refresh_seed_only)
+        self.addCleanup(self.db.close)
 
     def _mail(self, frm, to, extra=""):
         raw = (f"From: {frm}\r\nTo: {to}\r\n"
@@ -291,15 +302,46 @@ class QueueFromMailTests(unittest.TestCase):
             "SELECT email FROM civicrm_pending")}
 
     def test_an_unknown_address_on_a_known_media_domain_is_queued(self):
+        # Le cas qui justifie la file : un journaliste du Figaro sans fiche.
         im.queue_unknown_counterparts(
             self.db, self._mail("flavien@pauseia.fr", "xnouveau@lefigaro.fr"),
             NOW)
         self.assertIn("xnouveau@lefigaro.fr", self._queued())
 
-    def test_an_unknown_address_on_an_unknown_domain_is_queued_too(self):
+    def test_a_personal_freemail_contact_is_never_queued(self):
+        # Le médecin d'un membre. Rien ne le distingue d'un journaliste qui
+        # écrirait de son gmail : on renonce au second pour protéger le premier.
         im.queue_unknown_counterparts(
-            self.db, self._mail("flavien@pauseia.fr", "x@petitmedia.fr"), NOW)
-        self.assertIn("x@petitmedia.fr", self._queued())
+            self.db, self._mail("flavien@pauseia.fr", "dr.durand@orange.fr"),
+            NOW)
+        self.assertEqual(self._queued(), set())
+
+    def test_an_unrelated_company_is_not_queued_either(self):
+        im.queue_unknown_counterparts(
+            self.db, self._mail("flavien@pauseia.fr", "contact@plombier-92.fr"),
+            NOW)
+        self.assertEqual(self._queued(), set())
+
+    def test_a_town_hall_is_queued_even_though_nobody_knows_it(self):
+        # Les élu·es locaux n'ont aucune source d'adresses exploitable ; cette
+        # file est la seule façon de les faire entrer dans le CRM.
+        im.queue_unknown_counterparts(
+            self.db,
+            self._mail("flavien@pauseia.fr", "f.trichet@mairie-nantes.fr"), NOW)
+        self.assertIn("f.trichet@mairie-nantes.fr", self._queued())
+
+    def test_a_prefecture_too(self):
+        im.queue_unknown_counterparts(
+            self.db, self._mail("pref-bop@nord.gouv.fr", "flavien@pauseia.fr"),
+            NOW)
+        self.assertIn("pref-bop@nord.gouv.fr", self._queued())
+
+    def test_the_count_of_what_was_left_out_is_returned(self):
+        # Pour que le journal d'import dise ce qu'il écarte, sans le stocker.
+        queued, out_of_scope = im.queue_unknown_counterparts(
+            self.db, self._mail("flavien@pauseia.fr", "dr.durand@orange.fr"),
+            NOW)
+        self.assertEqual((queued, out_of_scope), (0, 1))
 
     def test_the_member_s_own_address_is_never_queued(self):
         im.queue_unknown_counterparts(

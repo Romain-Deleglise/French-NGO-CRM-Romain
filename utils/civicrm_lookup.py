@@ -42,6 +42,7 @@ from civicrm import (  # noqa: E402
     contact_to_person, norm_name,
 )
 from import_civicrm_medias import link_person_media, load_media_index  # noqa: E402
+import maildomains  # noqa: E402
 import mailpatterns  # noqa: E402
 import learn_conventions  # noqa: E402
 
@@ -729,12 +730,23 @@ def cmd_prune(db, args):
     """Drop queued addresses the filters now reject.
 
     The filters get tightened as the audit mailbox shows what it really carries
-    — the first real run queued four robots and no journalist — so addresses
+    (the first real run queued four robots and no journalist), so addresses
     already in the queue have to be re-judged against the current rules.
+
+    Two rules apply here. The old one: a generic address (`contact@`,
+    `redaction@`) names a desk, not a person. The new one, and the reason this
+    command matters now: the queue only admits an address the association has a
+    positive reason to follow (see maildomains.in_scope). Everything queued
+    before that rule existed — a member's doctor, their bank, a supplier — is
+    personal data we never had any business keeping, so it goes.
+
+    `resolved` rows are left alone: they carry a fiche and a real link.
     """
+    maildomains.refresh_scope(db)
     doomed = [r[0] for r in db.execute(
-        "SELECT email FROM civicrm_pending WHERE status = 'pending'")
-        if is_generic(r[0])]
+        "SELECT email FROM civicrm_pending WHERE status IN ('pending', 'absent', "
+        "'ignored')")
+        if is_generic(r[0]) or not maildomains.in_scope(r[0])]
     for address in doomed:
         log(f"  - {address}")
         if args.commit:
@@ -742,7 +754,8 @@ def cmd_prune(db, args):
     if args.commit:
         db.commit()
     prefix = "" if args.commit else "[dry-run] "
-    log(f"{prefix}{len(doomed)} adresse(s) retirée(s) de la file.")
+    log(f"{prefix}{len(doomed)} adresse(s) retirée(s) de la file (générique, ou "
+        f"hors du périmètre que l'association a une raison de suivre).")
     return 0
 
 

@@ -130,3 +130,51 @@ class UnlinkedPageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PruneScopeTests(unittest.TestCase):
+    """--prune retire ce que le nouveau périmètre n'admet plus.
+
+    Les adresses mises en file avant ce resserrement sont, pour une bonne part,
+    des données personnelles de tiers : la correspondance privée des membres
+    passe par la même boîte d'audit. Elles n'ont rien à faire là, et il ne
+    suffit pas de cesser d'en ajouter.
+    """
+
+    def setUp(self):
+        import civicrm_lookup as cl                  # noqa: PLC0415
+        import maildomains as md                     # noqa: PLC0415
+        self.cl, self.md = cl, md
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(
+            "CREATE TABLE persons (id INTEGER PRIMARY KEY, name TEXT, email TEXT);")
+        cl.ensure_civicrm_tables(self.db)
+        self.db.execute("INSERT INTO persons (name, email) "
+                        "VALUES ('Tristan Vey', 'tvey@lefigaro.fr')")
+        for email_, status in (("xnouveau@lefigaro.fr", "pending"),
+                               ("f.trichet@mairie-nantes.fr", "absent"),
+                               ("dr.durand@orange.fr", "pending"),
+                               ("contact@plombier-92.fr", "absent"),
+                               ("redaction@lefigaro.fr", "pending"),
+                               ("cbouchouchi@nouvelobs.com", "resolved")):
+            self.db.execute(
+                "INSERT INTO civicrm_pending (email, first_seen, last_seen, "
+                "status) VALUES (?, ?, ?, ?)", (email_, NOW, NOW, status))
+        self.db.commit()
+        self.addCleanup(md.refresh_seed_only)
+        self.addCleanup(self.db.close)
+
+    def _left(self):
+        return {r[0] for r in self.db.execute("SELECT email FROM civicrm_pending")}
+
+    def test_prune_keeps_only_what_is_in_scope(self):
+        self.cl.cmd_prune(self.db, type("A", (), {"commit": True})())
+        self.assertEqual(self._left(), {
+            "xnouveau@lefigaro.fr",          # domaine porté par une fiche
+            "f.trichet@mairie-nantes.fr",    # institution publique
+            "cbouchouchi@nouvelobs.com",     # déjà résolue : on n'y touche pas
+        })
+
+    def test_a_dry_run_removes_nothing(self):
+        self.cl.cmd_prune(self.db, type("A", (), {"commit": False})())
+        self.assertEqual(len(self._left()), 6)

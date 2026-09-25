@@ -461,7 +461,7 @@ def queue_unknown_counterparts(db, msg, now):
     else:
         return 0
 
-    queued = 0
+    queued = out_of_scope = 0
     for display, address in candidates:
         # Only the member's own side is skipped. NOT is_official(): that tests
         # the *domain*, and an unknown address on a known média domain — a
@@ -476,9 +476,17 @@ def queue_unknown_counterparts(db, msg, now):
         # exactly what this queue exists for.
         if is_member(address):
             continue
+        # Une raison positive d'entrer, et non la seule absence de raison d'en
+        # sortir : la règle Workspace copie toute la correspondance externe de
+        # l'association, y compris les mails personnels des membres. Sans ce
+        # test, le médecin d'un membre finissait dans une page consultable par
+        # toute l'équipe. Voir maildomains.in_scope().
+        if not maildomains.in_scope(address):
+            out_of_scope += 1
+            continue
         if enqueue(db, address, display, now):
             queued += 1
-    return queued
+    return queued, out_of_scope
 
 
 def record(db, msg, direction, matches, member, learn, low_confidence,
@@ -609,7 +617,9 @@ def main():
     email_index = load_email_index_with_aliases(db)
     name_patterns = build_name_pattern_index(db)
     domains = maildomains.refresh(db)
-    log(f"Known domains: {len(domains)} (from the fiches themselves).")
+    scope = maildomains.refresh_scope(db)
+    log(f"Known domains: {len(domains)} (from the fiches themselves). "
+        f"Queue scope: {len(scope)} domain(s) + public institutions.")
     log(f"Loaded {len(email_index)} élu·e e-mail(s) from {db_path}. "
         f"Output: {'auto-publish' if auto_publish else 'moderation queue'}.")
 
@@ -625,7 +635,7 @@ def main():
         last_uid = get_last_uid(db, "members")
         uids = fetch_uids(conn, mailbox, last_uid, args.backfill)
         log(f"Audit mailbox {mailbox!r}: {len(uids)} message(s) to inspect.")
-        imported = dup = skipped = queued = max_uid = 0
+        imported = dup = skipped = queued = out_of_scope = max_uid = 0
         max_uid = last_uid
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         for index, uid in enumerate(uids):
@@ -645,7 +655,10 @@ def main():
                     else:
                         skipped += 1
                         if not args.dry_run:
-                            queued += queue_unknown_counterparts(db, msg, now)
+                            new_queued, ignored = queue_unknown_counterparts(
+                                db, msg, now)
+                            queued += new_queued
+                            out_of_scope += ignored
                         if args.verbose:
                             log(f"  [skip] {decoded(msg.get('Subject'))!r}")
             max_uid = max(max_uid, uid)
@@ -661,9 +674,10 @@ def main():
         verb = "published" if auto_publish else "staged"
         run.imported, run.inspected = imported, len(uids)
         run.detail = (f"{imported} courriel(s) intégré(s), {dup} déjà connu(s), "
-                      f"{skipped} hors périmètre, {queued} adresse(s) en file.")
+                      f"{skipped} non rattaché(s), {queued} adresse(s) en file.")
         log(f"Done. Mails {verb}: {imported} | already-imported skipped: {dup} | "
             f"not member↔élu: {skipped} | queued for CiviCRM: {queued} | "
+            f"outside the queue's scope (personal mail, suppliers): {out_of_scope} | "
             f"last UID now: {max_uid if not args.dry_run else last_uid}.")
     except BaseException as exc:             # noqa: BLE001 — recorded, re-raised
         # Including KeyboardInterrupt: a run cut short did not finish its sweep,

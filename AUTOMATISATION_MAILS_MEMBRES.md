@@ -93,6 +93,33 @@ sans alourdir le menu du haut. Les fiches membre et les fiches **Personnes**
 **vue boîte mail** : chaque message en carte (expéditeur → destinataires, objet,
 corps), anciens messages repliés, le dernier ouvert.
 
+## 5 bis. Ce qui entre dans la file « à rattacher », et ce qui n'y entre pas
+
+La boîte d'audit reçoit **toute** la correspondance externe de l'association :
+la règle Workspace est une regex sur `@pauseia.fr`, sans distinction. Les mails
+personnels d'un membre y sont donc aussi.
+
+Mettre en file toute adresse non reconnue revenait à recopier ces tiers — le
+médecin, la banque, la famille — avec leur nom, dans une page que consulte
+toute l'équipe. La file n'admet donc une adresse que pour une **raison
+positive** (`maildomains.in_scope`) :
+
+| Entre en file | N'entre pas |
+|---|---|
+| Un domaine déjà porté par une fiche (`lefigaro.fr`) | Une messagerie grand public (`gmail.com`, `orange.fr`) |
+| Un domaine de média attesté par CiviCRM (`mail_conventions`, 788 domaines) | Une entreprise quelconque (`plombier-92.fr`) |
+| Une institution publique (`.gouv.fr`, `mairie-*`, `senat.fr`…) | Une adresse générique (`contact@`, `redaction@`) ou un robot |
+
+Le seuil est d'**une** fiche sur le domaine, pas deux comme pour
+`maildomains.collect()` : il ne s'agit pas de décider à qui appartient un
+domaine, seulement de savoir s'il nous concerne.
+
+**Contrepartie assumée** : un journaliste qui écrit depuis son gmail personnel
+n'est pas mis en file, parce que rien ne l'y distingue du médecin d'un membre.
+Sa fiche se crée à la main, et l'adresse est apprise ensuite.
+
+L'import compte ce qu'il écarte (`outside the queue's scope`) sans le stocker.
+
 ## 6. Fonctionnement en continu (automatique)
 
 Un **timer systemd** se déclenche **toutes les 10 minutes** et, dans le
