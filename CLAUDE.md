@@ -130,7 +130,12 @@ Interventions · Contenus · Modération · Utilisateurices.
 
 ### b) Intégration des mails (récurrent, timers systemd)
 - **Citoyens → élu·es** : `import_campaign_mails.py` (BCC campagne). Voir
-  `AUTOMATISATION_MAILS_CAMPAGNE.md`. RGPD : identité citoyen jamais stockée.
+  `AUTOMATISATION_MAILS_CAMPAGNE.md`. RGPD : identité citoyen jamais stockée —
+  et c'est ce qui explique la seule asymétrie restante avec le pipeline des
+  membres : `queue_unknown_recipients()` ne met en file que les **destinataires**
+  inconnus, jamais l'expéditeur, qui est le citoyen. Pour le reste les deux
+  pipelines sont alignés : même index d'adresses (`person_emails` compris), même
+  file `civicrm_pending`, même périmètre `maildomains.in_scope`.
 - **Membres ↔ élu·es** : `import_member_mails.py` (règle Gmail invisible →
   boîte d'audit IMAP). Matching robuste (adresse/alias/corps/fil/motif de nom),
   membres auto-créés. Voir `AUTOMATISATION_MAILS_MEMBRES.md`.
