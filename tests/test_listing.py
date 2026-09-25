@@ -95,3 +95,35 @@ class ListingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FaviconTests(unittest.TestCase):
+    """L'icône d'onglet, et surtout : qu'elle soit un SVG valide.
+
+    Le premier essai ne s'affichait nulle part parce qu'un commentaire XML y
+    contenait un double tiret (« --brand »), ce qu'XML interdit : le fichier
+    était rejeté en bloc, silencieusement, et l'onglet restait vide. Un octet
+    de travers suffit, donc on parse.
+    """
+
+    def setUp(self):
+        os.environ.setdefault("CRM_DB_PATH", tempfile.mkstemp(suffix=".db")[1])
+        os.environ["APP_PASSWORD"] = "x"
+        import app                                   # noqa: PLC0415
+        self.client = app.app.test_client()
+
+    def test_the_file_is_valid_xml(self):
+        import xml.etree.ElementTree as ET          # noqa: PLC0415
+        root = ET.parse(os.path.join(ROOT, "static", "favicon.svg")).getroot()
+        self.assertTrue(root.tag.endswith("svg"))
+
+    def test_favicon_ico_redirects_without_a_login(self):
+        # Les navigateurs qui ignorent <link rel="icon"> demandent /favicon.ico
+        # d'eux-mêmes, y compris sur l'écran de connexion : un 404 à chaque page.
+        response = self.client.get("/favicon.ico")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("favicon.svg", response.headers["Location"])
+
+    def test_the_page_declares_it(self):
+        html = self.client.get("/login").get_data(as_text=True)
+        self.assertIn('rel="icon"', html)

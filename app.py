@@ -1754,6 +1754,17 @@ def login_required(view):
     return wrapped
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """Rediriger vers l'icône SVG.
+
+    Les navigateurs qui ne lisent pas `<link rel="icon">` demandent
+    `/favicon.ico` d'eux-mêmes, et prenaient un 404 à chaque page. Pas de
+    `login_required` : l'icône s'affiche aussi sur l'écran de connexion.
+    """
+    return redirect(url_for("static", filename="favicon.svg"))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("authenticated"):
