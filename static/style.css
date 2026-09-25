@@ -119,7 +119,10 @@ a:hover { text-decoration: underline; }
   margin-bottom: 1.25rem;
 }
 h1 { font-size: 1.6rem; margin: 0; }
-.head-actions { display: flex; gap: .5rem; }
+/* Les boutons d'en-tête (« + Nouvelle rencontre », « Valider »…) peuvent être
+   deux ou trois et porter des libellés longs : sans retour à la ligne, ils
+   poussaient la page hors de l'écran sur /repartition à 390 px. */
+.head-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 h2 { font-size: 1.2rem; margin: 2rem 0 .75rem; }
 .muted { color: var(--muted); }
 
@@ -1059,6 +1062,8 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
   .search-line-filters select { width: 100%; }
 
   .page-head { flex-wrap: wrap; gap: .5rem; }
+  .head-actions { width: 100%; }
+  .head-actions .btn { flex: 1 1 auto; text-align: center; }
 
   /* Un tableau qui défile horizontalement cache toujours la même chose : la
      dernière colonne, souvent la plus utile. Les colonnes d'appoint sortent
