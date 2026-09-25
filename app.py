@@ -5083,8 +5083,10 @@ def _conversation_groups(db, mails):
         g["type"] = ("membre" if g["members"]
                      else "citoyen" if g["subject"].startswith("Mail d'un citoyen")
                      else "autre")
-        g["kind"] = (g["kinds"].copy() or {"—"}).pop() if len(g["kinds"]) == 1 \
-            else ("plusieurs" if g["kinds"] else "—")
+        # "" quand on ne sait pas, "plusieurs" quand le fil mêle des types :
+        # une valeur vide plutôt qu'un caractère d'affichage stocké comme donnée.
+        g["kind"] = (g["kinds"].copy().pop() if len(g["kinds"]) == 1
+                     else ("plusieurs" if g["kinds"] else ""))
     return convs
 
 

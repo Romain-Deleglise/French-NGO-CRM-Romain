@@ -22,7 +22,7 @@
   <a href="{{ url_for('unlinked') }}">Revenir à la file</a></p>
 {% else %}
 <p class="muted">Des courriels ont été échangés avec ces adresses, mais
-  l'application n'a pas su à qui les rattacher — elles n'ont de fiche ni ici ni
+  l'application n'a pas su à qui les rattacher : elles n'ont de fiche ni ici ni
   dans CiviCRM. <strong>C'est ici qu'il faut chercher un échange qui n'apparaît
   pas dans la liste.</strong> Dites de qui il s'agit et les courriels concernés
   seront rattachés au prochain import.
@@ -42,7 +42,7 @@
       {% for r in rows %}
       <tr>
         <td class="addr-cell"><strong>{{ r['email'] }}</strong></td>
-        <td class="col-secondary">{{ r['display'] or '—' }}</td>
+        <td class="col-secondary">{{ r['display'] or '' }}</td>
         <td class="nowrap" data-label="Courriels">{{ r['seen_count'] }}</td>
         <td class="nowrap col-secondary">{{ r['last_seen'][:10] | fr_date }}</td>
         <td class="nowrap" data-label="État">

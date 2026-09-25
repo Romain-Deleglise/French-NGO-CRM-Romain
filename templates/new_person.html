@@ -92,7 +92,7 @@
     <div class="field">
       <label>Relance prévue <span class="muted">(calculée)</span></label>
       <p class="readonly-value">
-        {% if form.get('follow_up_date') %}{{ form.get('follow_up_date') | fr_date }}{% else %}—{% endif %}
+        {% if form.get('follow_up_date') %}{{ form.get('follow_up_date') | fr_date }}{% endif %}
       </p>
       <p class="hint">La relance ne se saisit pas ici. Elle est égale à la
         date de relance renseignée dans la Rencontre ou le Courriel dont la date

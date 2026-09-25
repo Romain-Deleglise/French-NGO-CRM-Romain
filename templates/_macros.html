@@ -16,7 +16,7 @@
 
 {# Link shown truncated, opened in a new tab. #}
 {% macro ext_link(url) %}
-{% if url | safe_link %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">{{ url | truncate(60, True, '…') }}</a>{% else %}{{ url or '—' }}{% endif %}
+{% if url | safe_link %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">{{ url | truncate(60, True, '…') }}</a>{% else %}{{ url or '' }}{% endif %}
 {% endmacro %}
 
 {# What an organisation is, in one tag. A lookup rather than a ternary, so a
@@ -347,10 +347,10 @@
       <tr onclick="window.location='{{ url_for('intervention_detail', intervention_id=i['id']) }}'">
         <td class="nowrap">{{ i['intervention_date'] | fr_date }}</td>
         {% if show_organisation %}<td><strong>{{ i['organisation_name'] }}</strong></td>{% endif %}
-        <td>{{ i['person_names'] or '—' }}</td>
+        <td>{{ i['person_names'] or '' }}</td>
         <td class="nowrap"><span class="tag tag-intervention">{{ i['intervention_type'] }}</span></td>
-        <td class="summary-cell"><span class="subject">{{ i['summary'] or '—' }}</span></td>
-        <td class="nowrap">{% if i['link'] | safe_link %}<a href="{{ i['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% else %}—{% endif %}</td>
+        <td class="summary-cell"><span class="subject">{{ i['summary'] or '' }}</span></td>
+        <td class="nowrap">{% if i['link'] | safe_link %}<a href="{{ i['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -374,10 +374,10 @@
       <tr onclick="window.location='{{ url_for('content_detail', content_id=c['id']) }}'">
         <td class="nowrap">{{ c['published_on'] | fr_date }}</td>
         {% if show_organisation %}<td><strong>{{ c['organisation_name'] }}</strong></td>{% endif %}
-        <td>{{ c['person_names'] or '—' }}</td>
+        <td>{{ c['person_names'] or '' }}</td>
         <td class="nowrap"><span class="tag tag-content">{{ c['content_type'] }}</span></td>
-        <td class="summary-cell"><span class="subject">{{ c['summary'] or '—' }}</span></td>
-        <td class="nowrap">{% if c['link'] | safe_link %}<a href="{{ c['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% else %}—{% endif %}</td>
+        <td class="summary-cell"><span class="subject">{{ c['summary'] or '' }}</span></td>
+        <td class="nowrap">{% if c['link'] | safe_link %}<a href="{{ c['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -475,7 +475,7 @@
 <p class="import-status import-{{ status['state'] }}">
   {% if status['state'] == 'error' %}
     ⚠️ <strong>Le dernier import a échoué</strong> ({{ status['when'] }}).
-    Les échanges récents peuvent manquer — prévenez l'équipe technique.
+    Les échanges récents peuvent manquer ; prévenez l'équipe technique.
     {% if status['detail'] %}<span class="muted">{{ status['detail'] }}</span>{% endif %}
   {% elif status['state'] == 'stale' %}
     ⚠️ <strong>Dernière synchronisation {{ status['when'] }}.</strong>

@@ -165,6 +165,20 @@ h2 { font-size: 1.2rem; margin: 2rem 0 .75rem; }
 
 /* ---------- Search ---------- */
 .search { display: flex; gap: .5rem; margin-bottom: 1.25rem; }
+/* Recherche sur une ligne, filtres étiquetés sur la suivante. */
+.search-filters { flex-direction: column; gap: .5rem; }
+.search-line { display: flex; gap: .5rem; align-items: flex-end; }
+.search-line-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  font-size: .82rem;
+  color: var(--muted);
+}
+.search-line-filters select { font: inherit; padding: .45rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+/* Le pendant de .col-secondary : ce qui ne s'affiche QUE sur petit écran,
+   parce que la colonne qui le portait a disparu. */
+.only-narrow { display: none; }
 .search input[type="search"] {
   flex: 1;
   padding: .55rem .8rem;
@@ -203,6 +217,13 @@ table.meetings tbody td { padding: .8rem 1rem; border-bottom: 1px solid var(--li
 table.meetings tbody tr:last-child td { border-bottom: 0; }
 table.meetings tbody tr { cursor: pointer; transition: background .1s; }
 table.meetings tbody tr:hover { background: var(--brand-soft); }
+/* La ligne étant atteignable au clavier (voir static/rows.js), elle doit
+   montrer où se trouve le focus. */
+table.meetings tbody tr:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+  background: var(--brand-soft);
+}
 .nowrap { white-space: nowrap; }
 /* The subject, shortened cleanly. The clamp used to sit on the cell itself,
    which also held the « 4 messages » badge: the badge was dragged into the
@@ -1021,6 +1042,9 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
   .search { flex-wrap: wrap; }
   .search input[type="search"] { flex: 1 1 100%; }
   .search select, .search .btn { flex: 1 1 auto; }
+  .search-line { flex-wrap: wrap; }
+  .search-line-filters label { flex: 1 1 8rem; }
+  .search-line-filters select { width: 100%; }
 
   .page-head { flex-wrap: wrap; gap: .5rem; }
 
@@ -1029,6 +1053,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
      donc du tableau sur téléphone — l'information reste accessible en ouvrant
      la ligne, qui est de toute façon cliquable. */
   .col-secondary { display: none; }
+  .only-narrow { display: inline; }
 
   /* Trois colonnes doivent tenir dans 390 px : la largeur minimale confortable
      de l'objet (220 px) les faisait déborder à elle seule. */

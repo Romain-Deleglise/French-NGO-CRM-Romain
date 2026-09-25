@@ -43,14 +43,14 @@
           {% if x['important'] %}<span title="Important">⭐</span>{% endif %}
         </td>
         <td class="nowrap">{{ directions[x['direction']] }}</td>
-        <td><strong>{{ x['person_names'] or '—' }}</strong></td>
+        <td><strong>{{ x['person_names'] or '' }}</strong></td>
         <td class="summary-cell">
           <span class="subject">
             {% if x['subject'] %}<strong>{{ x['subject'] }}</strong><br>{% endif %}
             {{ x['summary'] }}
           </span>
         </td>
-        <td class="nowrap">{% if x['document_stored_name'] %}📎{% else %}—{% endif %}</td>
+        <td class="nowrap">{% if x['document_stored_name'] %}📎{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

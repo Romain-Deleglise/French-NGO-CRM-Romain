@@ -32,7 +32,7 @@
   <div class="field">
     <label>Genre de l'intervention</label>
     <p>{% if i['genre'] %}<span class="tag">{{ i['genre'] }}</span>{% else %}
-      <span class="muted">—</span>{% endif %}</p>
+      {% endif %}</p>
   </div>
 
   <div class="field">
@@ -41,13 +41,13 @@
       {% for p in people %}
         <li><a href="{{ url_for('person_detail', person_id=p['id']) }}">{{ p['name'] }}</a>
           {{ ui.contact_tag(p['contact_type']) }}</li>
-      {% else %}<li class="muted">—</li>{% endfor %}
+      {% else %}<li class="muted">Aucune</li>{% endfor %}
     </ul>
   </div>
 
   <div class="field">
     <label>Qui est intervenu pour PauseIA</label>
-    <p>{{ participants | join(', ') or '—' }}</p>
+    <p>{{ participants | join(', ') or '' }}</p>
   </div>
 
   <div class="field">
@@ -65,11 +65,11 @@
   <div class="grid-2">
     <div class="field">
       <label>Saisi par</label>
-      <p>{{ recorded_by or '—' }}</p>
+      <p>{{ recorded_by or '' }}</p>
     </div>
     <div class="field">
       <label>Validé par</label>
-      <p>{{ validated_by or '—' }}</p>
+      <p>{{ validated_by or '' }}</p>
     </div>
   </div>
 </div>

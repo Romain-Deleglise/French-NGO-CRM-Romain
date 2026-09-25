@@ -628,7 +628,7 @@ def cmd_apply_names(db, args):
         # while this journalist's own fiche says FRANCE 3 HAUTS DE FRANCE.
         row["notes"] += (
             f"\nAdresse reconnue par la convention de {domain} "
-            f"(« {convention['template']} ») — à confirmer.")
+            f"(« {convention['template']} ») : à confirmer.")
         if args.commit:
             person_id, _action = create_or_attach(
                 db, row, now, person_index, media_index)

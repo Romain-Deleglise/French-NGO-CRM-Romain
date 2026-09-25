@@ -245,7 +245,7 @@ def stage_message(db, msg, uid, mailbox, matches, dry_run, auto_publish):
     # RGPD minimisation: keep the subject (campaign context) but NOT the citizen's
     # identity — we record that the élu·e received a mail, its date and its object,
     # not who sent it. The From header is deliberately never read or stored.
-    summary = f"Mail d'un citoyen à {', '.join(names)} — « {subject} »"
+    summary = f"Mail d'un citoyen à {', '.join(names)} : « {subject} »"
 
     if dry_run:
         mode = "publish" if auto_publish else "stage"
