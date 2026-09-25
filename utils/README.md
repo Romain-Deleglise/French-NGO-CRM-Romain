@@ -93,7 +93,7 @@ chamber.
 - **Election-proof-ish:** the AN dump URL carries the legislature number
   (`AN_LEGISLATURE`, default `17`); bump it after a general election.
 
-The eurodéputé timer (`sync-eurodeputes`) is now **superseded** by this job.
+The eurodéputé timer (`sync-eurodeputes`) was superseded by this job and has been removed from the repository.
 
 ```bash
 python3 utils/sync_officials.py     # fetch + extract + insert, all four chambers
@@ -274,16 +274,17 @@ python3 utils/extract_eurodeputes.py     # refresh the dataset (cached)
 python3 utils/insert_eurodeputes.py      # upsert into persons
 ```
 
-**Weekly run:** install `deploy/sync-eurodeputes.{service,timer}` (Monday 05:50,
-before the mail imports). The service seeds the committed dataset into the
-container first (so a restarted container has a warm cache), then runs
-`extract && insert`:
+**Weekly run:** none of its own — `sync-officials` covers the four chambers,
+eurodéputé·es included (Monday 05:30). Les unités `sync-eurodeputes.{service,
+timer}` ont été **retirées du dépôt** : elles y restaient désactivées, ce qui
+revenait à proposer une installation qui ferait tourner deux synchros
+concurrentes sur les mêmes fiches. Si elles sont encore installées sur le
+serveur :
 
 ```bash
-sudo cp utils/deploy/sync-eurodeputes.service /etc/systemd/system/
-sudo cp utils/deploy/sync-eurodeputes.timer   /etc/systemd/system/
+sudo systemctl disable --now sync-eurodeputes.timer
+sudo rm -f /etc/systemd/system/sync-eurodeputes.{service,timer}
 sudo systemctl daemon-reload
-sudo systemctl enable --now sync-eurodeputes.timer
 ```
 
 > **Automatic:** new/replacement MEPs (with email) and political-group changes.
@@ -503,7 +504,8 @@ a écrit, en lecture seule, orchestrés depuis l'hôte.
 
 | Script | Rôle |
 |---|---|
-| `backup_db.py` | Sauvegarde cohérente par `VACUUM INTO`. **La base étant en WAL, un `cp` ne suffit plus.** |
+| `backup_db.py` | Sauvegarde cohérente par `VACUUM INTO`, **relue** avant d'être annoncée (`integrity_check` + comptage). **La base étant en WAL, un `cp` ne suffit plus.** `--dir` et `--keep N` pour un usage planifié. |
+| `importruns.py` | Trace de chaque exécution d'import ou de synchro (`import_runs`). `--record <script> --status ok\|error` permet à un orchestrateur hôte (civicrm-sync.sh) d'y déposer son résultat. |
 | `civicrm.py` | Correspondance CiviCRM → CRM et **test de contrat**. Le seul fichier qu'une mise à jour de CiviCRM peut casser. |
 | `civicrm_lookup.py` | File d'attente `civicrm_pending` et création des fiches : `--list-pending`, `--apply`, `--seed`, `--patterns`, `--apply-names`, `--prune`, `--retry-absent`, `--stats`. |
 | `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs de personnes). |
@@ -512,6 +514,7 @@ a écrit, en lecture seule, orchestrés depuis l'hôte.
 | `learn_conventions.py` | Apprend la convention d'adresses de **tous** les journalistes de CiviCRM (~12 900), pas seulement de nos fiches : `--file <export>`, `--commit`, `--show`. Ne crée **aucune fiche** — ne garde qu'un domaine, un média, un gabarit, un compteur ; les adresses sont jetées. C'est ce qui rend `cbouchouchi@nouvelobs.com` ou `emmanuel.pall@francetv.fr` reconnaissables alors qu'on n'a qu'une fiche sur ces rédactions. |
 | `mailpatterns.py` | La convention d'adresses de chaque média, apprise sur les adresses connues. Sert à **reconnaître** une adresse, jamais à en construire une pour y écrire. Un gabarit est retenu s'il explique au moins 60 % des adresses du domaine (`MIN_SHARE`) : l'unanimité exigée au départ laissait une exception historique annuler une rédaction de 2 000 adresses. |
 | `deploy/civicrm-seed.sh` | Amorçage, une fois : crée les fiches d'un groupe presse restreint, sans quoi aucune adresse de presse n'est rattachable ni aucune convention apprenable. |
+| `deploy/backup-db.{sh,service,timer}` | Sauvegarde nocturne (03:17) : dans le conteneur, puis **sortie sur l'hôte**, puis hors machine si `RSYNC_DEST`. C'est le seul filet de l'outil. |
 | `deploy/civicrm-sync.sh` | Le cycle quotidien : `cv` → `docker cp` → scripts. Planifié à 06:30 par `civicrm-sync.timer`, après l'import des mails de membres de 06:10. |
 
 Ordre de mise en route : `civicrm-seed.sh --commit`, puis activer

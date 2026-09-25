@@ -651,6 +651,19 @@ AUTO_IMPORT_LABEL = (
 EXCHANGES_WINDOW = 500
 EXCHANGES_WINDOW_MAX = 20000
 MAILS_PER_PAGE = 100
+# Les listes de fiches : 1 780 personnes et 451 organisations aujourd'hui, et
+# rien ne les fait décroître. Une page en rend cent.
+PEOPLE_PER_PAGE = 100
+
+
+def page_window(per_page):
+    """(page, limite, décalage) depuis la requête, pour une liste paginée.
+
+    On demande un élément de plus que la page : c'est ce qui dit s'il existe une
+    suite, sans payer un COUNT(*) sur toute la table à chaque affichage.
+    """
+    page = max(1, request.args.get("page", type=int) or 1)
+    return page, per_page + 1, (page - 1) * per_page
 
 MAIL_DIRECTIONS = {
     "sent": "Envoyé",
@@ -1191,6 +1204,23 @@ def _init_db_locked():
         );
         CREATE INDEX IF NOT EXISTS idx_mail_thread_key ON mail_thread(thread_key);
 
+        -- Index de volume. Invisibles à 2 000 courriels, décisifs à 30 000 : la
+        -- boîte d'audit ne perd jamais un message, donc ces tables ne font que
+        -- croître. Chaque index correspond à un tri ou à une jointure que les
+        -- pages font à chaque affichage.
+        CREATE INDEX IF NOT EXISTS idx_mails_date ON mails(mail_date DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_mail_persons_person
+            ON mail_persons(person_id);
+        CREATE INDEX IF NOT EXISTS idx_mail_members_member
+            ON mail_members(member_id);
+        CREATE INDEX IF NOT EXISTS idx_meetings_date ON meetings(meeting_date DESC);
+        -- /todo lit les relances en attente : sans index, un parcours complet
+        -- des deux tables à chaque ouverture de la page d'accueil de l'équipe.
+        CREATE INDEX IF NOT EXISTS idx_meetings_followup
+            ON meetings(follow_up_done, follow_up_date);
+        CREATE INDEX IF NOT EXISTS idx_mails_followup
+            ON mails(follow_up_done, follow_up_date);
+
         -- What each import run did (utils/importruns.py). Written by the
         -- importers, read here so the interface can state how fresh the data is
         -- instead of asking people to trust it — and say so when a run fails.
@@ -1234,6 +1264,8 @@ def _init_db_locked():
             source     TEXT,
             created_at TEXT NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_person_emails_person
+            ON person_emails(person_id);
 
         -- Staging tables. Anonymous users (no password) submit drafts here via
         -- the "Déclarer une activité" forms. A certified user reviews them on the
@@ -1542,6 +1574,20 @@ def _init_db_locked():
     _relax_political_group(db)
     _seed_organisations_from_groups(db)
     _slotify_availability(db)
+    # APRÈS _relax_political_group, et pas dans le script principal : cette
+    # migration reconstruit `persons` (DROP TABLE puis RENAME), ce qui emporte
+    # les index posés avant elle. Créés ici, ils survivent au premier démarrage
+    # comme aux suivants — un test de démarrage concurrent l'a montré en
+    # comparant le schéma après deux lancements.
+    db.executescript(
+        """
+        -- Le rapprochement des courriels interroge `persons.email` pour chaque
+        -- message traité : c'est la requête la plus répétée de tout l'outil.
+        CREATE INDEX IF NOT EXISTS idx_persons_email ON persons(email);
+        CREATE INDEX IF NOT EXISTS idx_persons_contact_type
+            ON persons(contact_type);
+        """
+    )
     db.commit()
     db.close()
 
@@ -3779,7 +3825,11 @@ def people():
         params.append(contact_type)
     if where:
         sql += " WHERE " + " AND ".join(where)
-    persons = db.execute(sql + " ORDER BY name_key(p.name)", params).fetchall()
+    page, limite, decalage = page_window(PEOPLE_PER_PAGE)
+    persons = db.execute(sql + " ORDER BY name_key(p.name) LIMIT ? OFFSET ?",
+                         [*params, limite, decalage]).fetchall()
+    has_next = len(persons) > PEOPLE_PER_PAGE
+    persons = persons[:PEOPLE_PER_PAGE]
     # Per-type totals for the filter chips, so switching says how many there are
     # before you switch. Computed unfiltered: they are the sizes of the choices.
     counts = dict(
@@ -3788,6 +3838,7 @@ def people():
     return render_template(
         "people.html", persons=persons, q=q, contact_type=contact_type,
         counts=counts, total=sum(counts.values()),
+        page=page, has_next=has_next,
     )
 
 
@@ -4136,13 +4187,18 @@ def organisations():
         params.append(org_type)
     if where:
         sql += " WHERE " + " AND ".join(where)
-    rows = db.execute(sql + " ORDER BY o.name COLLATE NOCASE", params).fetchall()
+    page, limite, decalage = page_window(PEOPLE_PER_PAGE)
+    rows = db.execute(sql + " ORDER BY o.name COLLATE NOCASE LIMIT ? OFFSET ?",
+                      [*params, limite, decalage]).fetchall()
+    has_next = len(rows) > PEOPLE_PER_PAGE
+    rows = rows[:PEOPLE_PER_PAGE]
     counts = dict(
         db.execute("SELECT org_type, COUNT(*) FROM organisations GROUP BY 1").fetchall()
     )
     return render_template(
         "organisation_list.html", organisations=rows, q=q, org_type=org_type,
         counts=counts, total=sum(counts.values()),
+        page=page, has_next=has_next,
     )
 
 

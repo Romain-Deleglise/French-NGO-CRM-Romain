@@ -182,8 +182,14 @@ ne dit rien du propriétaire d'une *nouvelle* adresse gmail. Les trois domaines
 parlementaires restent un plancher.
 
 ### e) Planification (`utils/deploy/*.timer`, UTC)
-- `sync-officials` (lun. 05:30, les 4 chambres + `in_office`) — remplace l'ancien
-  `sync-eurodeputes` (désactivé).
+- `sync-officials` (lun. 05:30, les 4 chambres + `in_office`) : remplace l'ancien
+  `sync-eurodeputes`, dont les unités ont été retirées du dépôt (les laisser
+  désactivées revenait à proposer l'installation de deux synchros concurrentes
+  sur les mêmes fiches). Trace son exécution dans `import_runs`.
+- `backup-db` (03:17, avant toutes les synchros) : `backup_db.py` dans le
+  conteneur, **puis copie sur l'hôte** et, si `RSYNC_DEST` est renseigné, hors
+  de la machine. Une sauvegarde restée dans le conteneur ne protège de rien.
+  Rotation : 2 copies dans le conteneur, 30 sur l'hôte.
 - `import-campaign-mails` (06:00, sync emails + import citoyens).
 - `import-member-mails` (**toutes les 10 min**, `OnUnitActiveSec=10min`) — la
   capture Workspace est instantanée, seul cet import faisait attendre ; sans

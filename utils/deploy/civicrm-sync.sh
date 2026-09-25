@@ -34,7 +34,20 @@ CRM_CONTAINER="${CRM_CONTAINER:-website-meeting-app}"
 CIVI_CWD="${CIVI_CWD:-/var/www/html}"
 REPO="${REPO:-/opt/volunteer-apps/apps/website-meeting}"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+
+# `set -e` interrompt le script à la première erreur : sans ce piège, une
+# synchro morte en cours de route ne laisserait aucune trace, ni dans la base
+# ni à l'écran de qui que ce soit.
+echec() {
+  code=$?
+  rm -rf "$WORK"
+  if [ "$code" -ne 0 ] && [ -n "${COMMIT:-}" ]; then
+    docker exec "$CRM_CONTAINER" python3 /app/utils/importruns.py \
+      --record civicrm_sync --status error \
+      --detail "arrêt sur erreur (code $code)" || true
+  fi
+}
+trap echec EXIT
 
 COMMIT=""
 MEDIAS_ONLY=""
@@ -218,6 +231,17 @@ if [ -n "$COMMIT" ]; then
   docker exec "$CRM_CONTAINER" python3 /app/utils/import_member_mails.py --backfill
 else
   echo "   (dry-run : import_member_mails.py --backfill non lancé)"
+fi
+
+# --------------------------------------------------------------------------- #
+# Laisser une trace, comme les imports de courriels. Ce script orchestre des
+# `docker exec` depuis l'hôte : aucun processus Python ne le couvre de bout en
+# bout, donc son échec serait la seule panne de synchro totalement invisible —
+# alors que c'est la plus fragile, puisqu'elle dépend d'un second logiciel.
+if [ -n "$COMMIT" ]; then
+  docker exec "$CRM_CONTAINER" python3 /app/utils/importruns.py \
+    --record civicrm_sync --status ok \
+    --detail "synchro complète (médias, conventions, file d'attente)" || true
 fi
 
 say "Terminé."

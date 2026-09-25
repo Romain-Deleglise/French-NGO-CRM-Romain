@@ -1,0 +1,11 @@
+[Unit]
+Description=Sauvegarde cohérente de meetings.db, sortie du conteneur
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# BACKUP_DIR, BACKUP_KEEP et surtout RSYNC_DEST (copie hors machine) se règlent
+# ici ou dans /opt/volunteer-apps/secrets/backup.env.
+EnvironmentFile=-/opt/volunteer-apps/secrets/backup.env
+ExecStart=/opt/scripts/backup-db.sh

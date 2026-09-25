@@ -127,3 +127,70 @@ class FaviconTests(unittest.TestCase):
     def test_the_page_declares_it(self):
         html = self.client.get("/login").get_data(as_text=True)
         self.assertIn('rel="icon"', html)
+
+
+class PeopleAndOrganisationsPagingTests(unittest.TestCase):
+    """Les deux listes de fiches, qui ne décroissent jamais.
+
+    1 780 personnes et 451 organisations en production : la page en rendait
+    l'intégralité à chaque affichage. Même défaut que /echanges, resté en place
+    parce qu'il ne se voit pas — jusqu'au jour où il se voit.
+    """
+
+    def setUp(self):
+        os.environ.setdefault("CRM_DB_PATH", tempfile.mkstemp(suffix=".db")[1])
+        os.environ["APP_PASSWORD"] = "x"
+        import app                                   # noqa: PLC0415
+        self.app = app
+        app.init_db()
+        self.db = sqlite3.connect(str(app.DB_PATH))
+        self.addCleanup(self.db.close)
+        for table in ("person_organisations", "mail_persons", "persons",
+                      "organisations"):
+            self.db.execute(f"DELETE FROM {table}")
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self.total = self.app.PEOPLE_PER_PAGE * 2 + 50
+        for index in range(self.total):
+            self.db.execute(
+                "INSERT INTO persons (name, contact_type, stance, created_at) "
+                "VALUES (?, 'Journaliste', 'Inconnue', ?)",
+                (f"Personne {index:04d}", now))
+            if index < self.app.PEOPLE_PER_PAGE + 50:
+                self.db.execute(
+                    "INSERT INTO organisations (name, org_type, stance, created_at)"
+                    " VALUES (?, 'Média', 'Inconnue', ?)",
+                    (f"Média {index:04d}", now))
+        self.db.commit()
+        self.client = app.app.test_client()
+        with self.client.session_transaction() as sess:
+            sess["authenticated"] = True
+
+    def _html(self, url):
+        return self.client.get(url).get_data(as_text=True)
+
+    def test_people_renders_one_page(self):
+        html = self._html("/people")
+        self.assertEqual(html.count("<tr onclick"), self.app.PEOPLE_PER_PAGE)
+        self.assertIn("Suivants", html)
+
+    def test_the_last_page_of_people(self):
+        html = self._html("/people?page=3")
+        self.assertEqual(html.count("<tr onclick"), 50)
+        self.assertNotIn("Suivants", html)
+
+    def test_organisations_paginate_too(self):
+        html = self._html("/organisations")
+        self.assertEqual(html.count("<tr onclick"), self.app.PEOPLE_PER_PAGE)
+        self.assertIn("Suivants", html)
+
+    def test_a_filter_survives_a_page_change(self):
+        # Sans ça, « page suivante » repart de zéro, ce qui est la façon la plus
+        # sûre de faire croire que la recherche ne fonctionne pas.
+        html = self._html("/people?q=Personne+00&page=1")
+        self.assertIn("q=Personne", html)
+
+    def test_the_totals_still_count_everybody(self):
+        # Les compteurs par type sont calculés sans filtre ni pagination : ils
+        # disent la taille du choix, pas celle de la page.
+        html = self._html("/people")
+        self.assertIn(str(self.total), html)

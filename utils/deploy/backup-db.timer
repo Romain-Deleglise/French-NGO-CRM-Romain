@@ -1,0 +1,14 @@
+[Unit]
+Description=Sauvegarder la base chaque nuit
+
+[Timer]
+# 03:17 UTC : avant les synchros du matin (05:30, 06:00, 06:10, 06:30), donc sur
+# une base au repos, et à une minute qui n'est pas celle de tout le monde.
+OnCalendar=*-*-* 03:17:00
+# Rattrape le passage manqué si la machine était éteinte : une nuit sans
+# sauvegarde ne doit pas passer inaperçue jusqu'à la nuit suivante.
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target
