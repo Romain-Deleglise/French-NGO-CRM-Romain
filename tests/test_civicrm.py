@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "utils"))
 
 import civicrm as cc  # noqa: E402
+import maildomains as md  # noqa: E402
+import import_member_mails as im  # noqa: E402
 import civicrm_lookup as cl  # noqa: E402
 from import_civicrm_medias import load_media_index, upsert_media  # noqa: E402
 
@@ -253,6 +255,69 @@ class BulkMailTests(unittest.TestCase):
 
     def test_a_plain_message_is_not_bulk(self):
         self.assertFalse(cl.is_bulk(self._msg({"Subject": "Votre tribune"})))
+
+
+class QueueFromMailTests(unittest.TestCase):
+    """What reaches the queue from a real member mail.
+
+    The case that matters and had no test: a member writes to an address nobody
+    holds, on a média domain the CRM *does* know. That is the best possible
+    candidate for a CiviCRM lookup, and it was being skipped.
+    """
+
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        cl.ensure_civicrm_tables(self.db)
+        # Two Figaro journalists on file, so lefigaro.fr counts as known.
+        md.refresh_seed_only()
+        self._known = {"lefigaro.fr"}
+        self._real_is_known = md.is_known
+        md.is_known = lambda addr: (addr or "").lower().rsplit("@", 1)[-1] \
+            in self._known | set(md.SEED_DOMAINS)
+
+    def tearDown(self):
+        md.is_known = self._real_is_known
+        md.refresh_seed_only()
+        self.db.close()
+
+    def _mail(self, frm, to, extra=""):
+        raw = (f"From: {frm}\r\nTo: {to}\r\n"
+               f"Subject: Votre article\r\nMessage-ID: <x@pauseia.fr>\r\n"
+               f"{extra}\r\nBonjour,\r\n")
+        return email.message_from_string(raw)
+
+    def _queued(self):
+        return {r[0] for r in self.db.execute(
+            "SELECT email FROM civicrm_pending")}
+
+    def test_an_unknown_address_on_a_known_media_domain_is_queued(self):
+        im.queue_unknown_counterparts(
+            self.db, self._mail("flavien@pauseia.fr", "xnouveau@lefigaro.fr"),
+            NOW)
+        self.assertIn("xnouveau@lefigaro.fr", self._queued())
+
+    def test_an_unknown_address_on_an_unknown_domain_is_queued_too(self):
+        im.queue_unknown_counterparts(
+            self.db, self._mail("flavien@pauseia.fr", "x@petitmedia.fr"), NOW)
+        self.assertIn("x@petitmedia.fr", self._queued())
+
+    def test_the_member_s_own_address_is_never_queued(self):
+        im.queue_unknown_counterparts(
+            self.db, self._mail("flavien@pauseia.fr", "x@lefigaro.fr"), NOW)
+        self.assertNotIn("flavien@pauseia.fr", self._queued())
+
+    def test_a_bulk_message_queues_nothing(self):
+        im.queue_unknown_counterparts(
+            self.db,
+            self._mail("news@lefigaro.fr", "flavien@pauseia.fr",
+                       "List-Unsubscribe: <https://x.test/u>\r\n"),
+            NOW)
+        self.assertEqual(self._queued(), set())
+
+    def test_member_to_member_queues_nothing(self):
+        im.queue_unknown_counterparts(
+            self.db, self._mail("flavien@pauseia.fr", "romain@pauseia.fr"), NOW)
+        self.assertEqual(self._queued(), set())
 
 
 class QueueAndApplyTests(unittest.TestCase):

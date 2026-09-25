@@ -285,6 +285,23 @@ python3 utils/civicrm_lookup.py --stats
 python3 utils/civicrm_lookup.py --retry-absent --commit   # après avoir enrichi CiviCRM
 ```
 
+### Ce qui entre dans la file — et le piège évité
+
+Une adresse **inconnue sur un domaine de média connu** est le meilleur candidat
+possible à une recherche CiviCRM : c'est un journaliste du Figaro dont on n'a
+pas la fiche. Elle doit donc entrer en file.
+
+Ça n'a pas toujours été le cas. `queue_unknown_counterparts` écartait
+`is_official(address)` — qui teste le **domaine**, pas l'adresse. Le raccourci
+se défendait quand « connu » désignait les trois domaines parlementaires : toute
+adresse d'élu·e y était déjà dans l'index, donc une non reconnue était une
+adresse de cabinet, traitée par l'apprentissage d'alias via les fils. Dès que
+les domaines de médias ont rejoint la liste, il a commencé à jeter précisément
+ce que cette file existe pour attraper.
+
+Symptôme : le premier balayage complet a mis 195 adresses en file, **aucune sur
+un domaine de presse**. Seul le côté membre est écarté désormais.
+
 ### Ce qui n'entre jamais dans la file
 
 Le premier passage réel sur la boîte d'audit a produit **quatre adresses, toutes

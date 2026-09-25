@@ -462,7 +462,18 @@ def queue_unknown_counterparts(db, msg, now):
 
     queued = 0
     for display, address in candidates:
-        if is_member(address) or is_official(address):
+        # Only the member's own side is skipped. NOT is_official(): that tests
+        # the *domain*, and an unknown address on a known média domain — a
+        # Figaro journalist we have no fiche for — is the single best candidate
+        # for a CiviCRM lookup. Skipping it is why the first full sweep queued
+        # 195 addresses and not one of them sat on a press domain.
+        #
+        # The skip was defensible while "known" meant the three parliamentary
+        # domains: every élu·e's address there was already in the index, so an
+        # unmatched one was a cabinet address, which thread-based alias learning
+        # handles. Once média domains joined the list, it started throwing away
+        # exactly what this queue exists for.
+        if is_member(address):
             continue
         if enqueue(db, address, display, now):
             queued += 1
