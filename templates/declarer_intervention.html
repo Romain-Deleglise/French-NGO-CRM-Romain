@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-head">
   <h1>Déclarer une intervention</h1>
-  <a class="btn btn-ghost" href="{{ url_for('declarer') }}">Annuler</a>
+  <a class="btn" href="{{ url_for('declarer') }}">Annuler</a>
 </div>
 
 <p class="muted">Une prise de parole de PauseIA : une interview donnée, un plateau
@@ -42,7 +42,7 @@
 
   <div class="actions">
     <button class="btn btn-primary" type="submit">Transmettre</button>
-    <a class="btn btn-ghost" href="{{ url_for('declarer') }}">Annuler</a>
+    <a class="btn" href="{{ url_for('declarer') }}">Annuler</a>
   </div>
 </form>
 {% endblock %}

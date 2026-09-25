@@ -46,7 +46,7 @@
     {{ format_label(m['meeting_format']) }}{% if m['meeting_place'] %} · {{ m['meeting_place'] }}{% endif %}
   </p>
   {% if all_past %}
-  <p class="warn">Toutes les dates proposées sont passées — à replanifier.</p>
+  <p class="warn">Toutes les dates proposées sont passées : à replanifier.</p>
   {% endif %}
 
   {# data-autosave: ticking a box saves the whole grid straight away, and the
@@ -73,7 +73,7 @@
           <span class="signup-count"><span data-count>{{ count }}</span>
             dispo<span data-plural>{{ '' if count == 1 else 's' }}</span></span>
           <span class="warn" data-short-note
-                {% if count >= min_participants %}hidden{% endif %}>— il en faut {{ min_participants }}</span>
+                {% if count >= min_participants %}hidden{% endif %}>(il en faut {{ min_participants }})</span>
         </p>
         <div class="checklist">
           {% for mo in moderators %}
@@ -94,7 +94,7 @@
        string stays in the templates. #}
     <span class="autosave-status" data-autosave-status aria-live="polite"
           data-saving="Enregistrement…" data-saved="✓ Enregistré"
-          data-failed="⚠ Échec de l'enregistrement — utilisez le bouton"></span>
+          data-failed="⚠ Échec de l'enregistrement : utilisez le bouton"></span>
     {% endif %}
   </form>
 

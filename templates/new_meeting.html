@@ -26,7 +26,7 @@
   <strong>Personnes indiquées par le déclarant :</strong> {{ proposed_people }}
   {% if unmatched_people %}
   <p class="hint"><strong>Sans correspondance :</strong>
-    {{ unmatched_people | join(', ') }} — ces noms n'ont pas été retrouvés dans les
+    {{ unmatched_people | join(', ') }} : ces noms n'ont pas été retrouvés dans les
     fiches, cochez-les à la main ou
     <a href="{{ url_for('new_person') }}">créez la fiche manquante</a>.
     Les autres sont déjà cochées ci-dessous ; vérifiez-les avant de valider.</p>
@@ -55,7 +55,7 @@
     <span class="notice-icon">🗓️</span>
     <span>Cette rencontre entre en <strong>répartition</strong> : sa date n'est pas
       encore arrêtée. Renseignez la date principale et au moins une
-      « autre date possible » ci-dessous — chacun·e indiquera ensuite ses
+      « autre date possible » ci-dessous. Chacun·e indiquera ensuite ses
       disponibilités sur <a href="{{ url_for('repartition') }}">Répartition
       rencontre</a>, et la date sera fixée une fois assez de monde inscrit.</span>
   </div>
@@ -74,9 +74,9 @@
     <div class="person-picker">
       <label for="person_picker" class="muted">Cocher une personne depuis la liste</label>
       <select id="person_picker" data-check-group="person_ids">
-        <option value="">— Choisir une personne —</option>
+        <option value="">Choisir une personne</option>
         {% for p in people %}
-        <option value="{{ p['id'] }}">{{ p['name'] }}{% if p['organisation_names'] %} — {{ p['organisation_names'] }}{% endif %}</option>
+        <option value="{{ p['id'] }}">{{ p['name'] }}{% if p['organisation_names'] %} · {{ p['organisation_names'] }}{% endif %}</option>
         {% endfor %}
       </select>
     </div>
@@ -85,7 +85,7 @@
         <label class="check">
           <input type="checkbox" name="person_ids" value="{{ p['id'] }}"
                  {% if (p['id']|string) in selected_ids %}checked{% endif %}>
-          {{ p['name'] }}{% if p['organisation_names'] %} <span class="muted">— {{ p['organisation_names'] }}</span>{% endif %}
+          {{ p['name'] }}{% if p['organisation_names'] %} <span class="muted">· {{ p['organisation_names'] }}</span>{% endif %}
         </label>
       {% endfor %}
     </div>
@@ -155,8 +155,8 @@
     <input type="text" id="meeting_place" name="meeting_place"
            value="{{ form.get('meeting_place', '') }}"
            placeholder="Permanence, mairie, salon… ou lien de visio">
-    <p class="hint">En présentiel, indiquez où la rencontre a eu lieu — c'est
-      obligatoire. En visio, vous pouvez y mettre le lien ou la plateforme, ou
+    <p class="hint">En présentiel, indiquez où la rencontre a eu lieu (c'est
+      obligatoire). En visio, vous pouvez y mettre le lien ou la plateforme, ou
       laisser vide.</p>
   </div>
 
@@ -184,7 +184,7 @@
       {% endfor %}
     </div>
     <p class="hint">Jusqu'à {{ max_alt_dates }} autres dates possibles pour une
-      future rencontre. Un champ heure apparaît dès qu'une date est renseignée —
+      future rencontre. Un champ heure apparaît dès qu'une date est renseignée :
       laissez-le vide si l'heure n'est pas encore connue. Indiquez deux fois la
       même date avec deux heures pour proposer deux créneaux ce jour-là :
       chacun·e s'inscrit alors sur l'un ou l'autre.</p>
@@ -249,7 +249,7 @@
              accept=".pdf,.docx,.odt,.txt">
       <p class="hint">
         {% if current and current['document_stored_name'] %}Choisir un fichier le remplace. {% endif %}
-        Formats acceptés : .pdf, .docx, .odt, .txt — jusqu'à 10&nbsp;Mo.
+        Formats acceptés : .pdf, .docx, .odt, .txt (jusqu'à 10&nbsp;Mo).
       </p>
     </div>
   </div>

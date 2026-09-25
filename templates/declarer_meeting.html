@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-head">
   <h1>Déclarer une rencontre</h1>
-  <a class="btn btn-ghost" href="{{ url_for('declarer') }}">Annuler</a>
+  <a class="btn" href="{{ url_for('declarer') }}">Annuler</a>
 </div>
 
 <form class="card form" method="post" enctype="multipart/form-data"
@@ -18,9 +18,9 @@
     <div class="depute-picker">
       <label for="person_picker">Ajouter une personne depuis la liste</label>
       <select id="person_picker" data-target="proposed_people">
-        <option value="">— Choisir une personne —</option>
+        <option value="">Choisir une personne</option>
         {% for p in people %}
-        <option value="{{ p['name'] }}">{{ p['name'] }} — {{ p['role'] }}</option>
+        <option value="{{ p['name'] }}">{{ p['name'] }}{% if p['role'] %} · {{ p['role'] }}{% endif %}</option>
         {% endfor %}
       </select>
     </div>
@@ -80,7 +80,7 @@
            data-follow-up-from="meeting_date" data-follow-up-days="{{ follow_up_days['meeting'] }}"
            value="{{ (form.get('follow_up_date') or default_follow_up('meeting', form.get('meeting_date') or today)) | fr_date }}">
     <p class="hint">Date à laquelle il faudrait relancer. Pré-remplie à
-      {{ follow_up_days['meeting'] }} jours après la rencontre — corrigez-la, ou videz le
+      {{ follow_up_days['meeting'] }} jours après la rencontre : corrigez-la, ou videz le
       champ s'il n'y a pas lieu de relancer.</p>
   </div>
 
@@ -95,7 +95,7 @@
     <input type="file" id="document" name="document"
            accept=".pdf,.docx,.odt,.txt">
     <p class="hint">Compte rendu, notes… Formats acceptés : .pdf, .docx, .odt, .txt
-      — jusqu'à 10&nbsp;Mo.</p>
+      (jusqu'à 10&nbsp;Mo).</p>
   </div>
 
   <div class="field">
@@ -118,7 +118,7 @@
 
   <div class="actions">
     <button class="btn btn-primary" type="submit">Transmettre</button>
-    <a class="btn btn-ghost" href="{{ url_for('declarer') }}">Annuler</a>
+    <a class="btn" href="{{ url_for('declarer') }}">Annuler</a>
   </div>
 </form>
 {% endblock %}

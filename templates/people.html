@@ -40,9 +40,6 @@
         <th>Fonction</th>
         <th>Organisation</th>
         <th>Position sur PauseIA</th>
-        <th>Courriels</th>
-        <th>Rencontres</th>
-        <th>Relance</th>
       </tr>
     </thead>
     <tbody>
@@ -62,16 +59,6 @@
           {% else %}<span class="muted">—</span>{% endfor %}
         </td>
         <td>{{ p['stance'] }}</td>
-        <td class="nowrap">
-          <span title="Envoyés">↗ {{ p['mails_sent'] }}</span> ·
-          <span title="Reçus">↘ {{ p['mails_received'] }}</span>
-        </td>
-        <td class="nowrap">{{ p['meeting_count'] }}</td>
-        <td class="nowrap">
-          {% if p['follow_up_date'] %}
-            {{ p['follow_up_date'] | fr_date }} {{ ui.due_badge(p['follow_up_date']) }}
-          {% else %}—{% endif %}
-        </td>
       </tr>
       {% endfor %}
     </tbody>

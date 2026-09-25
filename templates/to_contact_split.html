@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Répartir « À contacter »{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Répartir « À contacter »</h1>
+  <a class="btn" href="{{ url_for('todo') }}">Retour au TODO</a>
+</div>
+
+<p class="hint">Choisissez les organisations à contacter et combien de personnes
+  dans chacune, puis les utilisateurices qui écriront. Les personnes sont tirées
+  au sort et réparties aussi également que possible, en respectant les
+  organisations que chacun·e ne veut pas contacter. Rien n'est enregistré avant
+  la validation.</p>
+
+{# Setup. Re-submitting it as is redraws: the draw is random. #}
+<form class="card form" method="post" action="{{ url_for('to_contact_split') }}"
+      data-split-form>
+  <h2 class="section-title split-title-org">Organisations</h2>
+  <p class="hint">Un nombre de personnes, ou un pourcentage de l'organisation
+    arrondi au supérieur. La valeur tapée à côté d'un type remplit toutes ses
+    organisations ; vous pouvez ensuite en changer une.</p>
+
+  <div class="field">
+    <label>Courriels déjà envoyés par PauseIA</label>
+    <div class="grid-2">
+      <input type="number" name="min_mails" min="0" inputmode="numeric" data-split-filter
+             placeholder="au moins…" value="{{ form.min_mails }}">
+      <input type="number" name="max_mails" min="0" inputmode="numeric" data-split-filter
+             placeholder="au plus…" value="{{ form.max_mails }}">
+    </div>
+    <p class="hint">Seules les personnes dans cette fourchette peuvent être tirées.
+      Ne comptent que les courriels envoyés par un·e membre de PauseIA, pas les
+      courriels citoyens de la campagne.</p>
+  </div>
+
+  <div class="field">
+    <label for="declaration">Déclaration de PauseIA</label>
+    <select id="declaration" name="declaration" data-split-filter>
+      <option value="">Peu importe</option>
+      <option value="oui" {% if form.declaration == 'oui' %}selected{% endif %}>Seulement les signataires</option>
+      <option value="non" {% if form.declaration == 'non' %}selected{% endif %}>Seulement les non-signataires</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="check">
+      <input type="checkbox" name="skip_pending" value="1" data-split-filter
+             {% if form.skip_pending %}checked{% endif %}>
+      Ne pas tirer au sort des personnes déjà dans « À contacter »
+    </label>
+    <p class="hint">Ce champ sert à spécifier si des personnes se trouvant déjà
+      dans « À contacter » peuvent être à nouveau tirées au sort (ce qui change
+      donc l'utilisateurice qui doit les contacter) ou non.</p>
+  </div>
+
+  <div class="checklist split-list">
+    {% for group in org_types %}
+      {% set in_group = organisations | selectattr('org_type', 'equalto', group) | list %}
+      {% if in_group %}
+      <div class="split-typehead">
+        <span class="split-type muted">{{ group }}</span>
+        <button class="btn btn-primary" type="button" data-split-type-all="{{ group }}">Tout cocher</button>
+        <input type="number" name="type-target-{{ group }}" min="1" inputmode="numeric"
+               value="{{ form.type_targets.get(group, '') }}"
+               data-type-target="{{ group }}"
+               aria-label="Combien dans chaque organisation {{ group }}">
+        <select name="type-unit-{{ group }}" aria-label="Unité"
+                data-type-unit="{{ group }}">
+          <option value="n">personnes</option>
+          <option value="pct" {% if form.type_units.get(group) == 'pct' %}selected{% endif %}>%</option>
+        </select>
+      </div>
+      {% for o in in_group %}
+      <div class="split-org">
+        <label class="check">
+          <input type="checkbox" name="org_ids" value="{{ o['id'] }}"
+                 data-org-type="{{ o['org_type'] }}"
+                 {% if o['id'] in form.org_ids %}checked{% endif %}>
+          <span class="split-org-name">
+            {{ o['name'] }}
+            {# data-members: one [courriels PauseIA, déjà en attente, a signé]
+               triple per person, so the « avec les filtres » count follows the filters
+               as they are typed (JS) without asking the server. #}
+            <span class="split-counts muted"
+                  data-members="{{ member_stats.get(o['id'], []) | tojson }}">
+              {{ o['size'] }} personne{{ '' if o['size'] == 1 else 's' }}<span data-match hidden></span>{% if o['pending'] %} · {{ o['pending'] }} déjà en attente{% endif %}
+            </span>
+          </span>
+        </label>
+        <input type="number" name="target-{{ o['id'] }}" min="1" inputmode="numeric"
+               value="{{ form.targets.get(o['id'], '') }}" aria-label="Combien"
+               data-org-target="{{ o['org_type'] }}">
+        <select name="unit-{{ o['id'] }}" aria-label="Unité"
+                data-org-unit="{{ o['org_type'] }}">
+          <option value="n">personnes</option>
+          <option value="pct" {% if form.units.get(o['id']) == 'pct' %}selected{% endif %}>%</option>
+        </select>
+      </div>
+      {% endfor %}
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <h2 class="section-title split-title-mod">Utilisateurices</h2>
+  <p class="hint">Cochez celles et ceux qui écrivent. Sous chaque nom, cochez les
+    organisations choisies que la personne ne veut pas contacter.
+    « Quiconque » est une part laissée à qui voudra la prendre.</p>
+  {% for mo in moderators %}
+  <div class="split-mod">
+    <label class="check">
+      <input type="checkbox" name="moderator_ids" value="{{ mo['id'] }}"
+             {% if mo['id'] in form.moderator_ids %}checked{% endif %}>
+      <strong>{{ mo['name'] }}</strong>
+    </label>
+    <div class="split-excl">
+      <span class="muted">Ne contacte pas :</span>
+      <span class="checklist-inline">
+        {# Per type: a « Tous » shortcut (nameless, never posted) that ticks
+           the type's chosen organisations, then the organisations themselves. #}
+        {% for group in org_types %}
+        {% set in_group = organisations | selectattr('org_type', 'equalto', group) | list %}
+        {% if in_group %}
+        <label class="check split-excl-type" data-split-excl-type="{{ group }}">
+          <input type="checkbox"> <strong>Tous : {{ group }}</strong>
+        </label>
+        {% for o in in_group %}
+        <label class="check" data-split-org="{{ o['id'] }}" data-org-type="{{ group }}">
+          <input type="checkbox" name="exclude-{{ mo['id'] }}" value="{{ o['id'] }}"
+                 {% if o['id'] in form.exclusions.get(mo['id'], ()) %}checked{% endif %}>
+          {{ o['name'] }}
+        </label>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+        <span class="muted" data-split-none>aucune organisation choisie</span>
+      </span>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="actions">
+    <button class="btn btn-primary" type="submit">
+      {{ 'Relancer le tirage' if preview else 'Tirer au sort' }}</button>
+    <a class="btn btn-ghost" href="{{ url_for('to_contact_split') }}">Tout effacer</a>
+  </div>
+</form>
+
+{% if preview %}
+<h2 class="section-title split-title-preview">Aperçu : {{ preview.total }}
+  personne{{ '' if preview.total == 1 else 's' }}</h2>
+
+{# Changing someone's utilisateurice moves them to that board (JS). #}
+<form method="post" action="{{ url_for('confirm_to_contact_split') }}"
+      data-split-preview>
+  {% for mo, rows in preview.blocks %}
+  <section class="card" data-split-board="{{ mo['id'] }}">
+    <h3>{{ mo['name'] }} <span class="muted">(<span data-split-board-count>{{ rows|length }}</span>)</span></h3>
+    <ul class="split-rows">
+      {% for r in rows %}
+      <li data-sort="{{ r['group']|lower }}|{{ r['name']|lower }}">
+        <input type="hidden" name="person_ids" value="{{ r['id'] }}">
+        <span class="split-person">
+          <a href="{{ url_for('person_detail', person_id=r['id']) }}">{{ r['name'] }}</a>
+          <span class="muted">· {{ r['group'] }}{% if r['role'] %} · {{ r['role'] }}{% endif %}</span>
+        </span>
+        <select name="assign-{{ r['id'] }}" aria-label="Attribuée à">
+          {% for m in r['allowed'] %}
+          <option value="{{ m['id'] }}" {% if m['id'] == r['assigned'] %}selected{% endif %}>
+            {{ m['name'] }}</option>
+          {% endfor %}
+        </select>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted" data-split-board-empty {% if rows %}hidden{% endif %}>Personne.</p>
+  </section>
+  {% endfor %}
+
+  <div class="actions">
+    <button class="btn btn-primary" type="submit">Valider la répartition</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

@@ -602,8 +602,6 @@ a.cal-ev:hover {
 /* « À contacter » is about writing to someone, so it borrows the courriel
    yellow the rest of the app already uses for mail. */
 .todo-head-contact { border-color: var(--courriel); }
-/* The « + Ajouter des personnes » button sits on the heading line. */
-.btn-inline { margin-left: .6rem; vertical-align: middle; font-size: .85rem; }
 
 .todo-list { list-style: none; margin: .6rem 0 0; padding: 0; }
 .todo-item {
@@ -875,3 +873,44 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
 }
 .chip-on .muted { color: var(--press-ink); opacity: .75; }
 
+
+/* ---------- Répartition of « À contacter » ---------- */
+.split-list { max-height: 360px; }
+.split-typehead { display: flex; align-items: center; gap: .5rem; margin: .6rem 0 .1rem; }
+.split-typehead:first-child { margin-top: 0; }
+.split-type { flex: 1; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.split-typehead input[type="number"] { width: 5.5rem; }
+.split-typehead select { width: auto; }
+.split-excl-type { font-size: .85rem; }
+.split-org { display: flex; align-items: center; gap: .5rem; }
+.split-org .check { flex: 1; min-width: 0; align-items: flex-start; }
+.split-org-name { min-width: 0; overflow-wrap: anywhere; }
+.split-counts { display: block; font-size: .8rem; }
+.split-org input[type="number"] { width: 5.5rem; }
+.split-org select { width: auto; }
+.split-mod { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.split-mod:last-of-type { border-bottom: 0; }
+.split-excl { margin-left: 1.6rem; font-size: .9rem; }
+.split-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; }
+.split-rows li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.split-rows select { width: auto; }
+.todo-assignee { margin: 1rem 0 .35rem; font-size: .95rem; }
+@media (max-width: 560px) {
+  .split-typehead, .split-org, .split-rows li { flex-wrap: wrap; }
+}
+
+/* « Utilisateurice » filter in a /todo section title */
+.todo-filter { width: auto; margin-left: .5rem; font-size: .85rem; font-weight: 400; padding: .2rem .4rem; vertical-align: middle; }
+
+/* Répartition: the section titles' underline in the page's two colours, and
+   no spinner arrows on the small number boxes (they cover the digits at that
+   width). */
+.split-title-org { text-decoration-color: var(--press-line); }   /* light blue */
+.split-title-mod { text-decoration-color: #f9a8d4; }             /* light pink */
+.split-title-preview { text-decoration-color: #fca5a5; }         /* light red */
+.split-org input[type="number"],
+.split-typehead input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.split-org input[type="number"]::-webkit-inner-spin-button,
+.split-org input[type="number"]::-webkit-outer-spin-button,
+.split-typehead input[type="number"]::-webkit-inner-spin-button,
+.split-typehead input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

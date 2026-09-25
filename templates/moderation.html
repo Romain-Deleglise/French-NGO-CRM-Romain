@@ -36,7 +36,7 @@
   <div class="card">
     <div class="card-body">
       <strong>{{ m['meeting_date'] | fr_date }}{% if m['meeting_time'] %} · {{ m['meeting_time'] }}{% endif %}</strong>
-      — {{ m['proposed_people'] }}
+      · {{ m['proposed_people'] }}
       <p>{{ m['summary'] }}</p>
       {% if m['document_orig_name'] %}<p class="hint">📎 {{ m['document_orig_name'] }}</p>{% endif %}
       {% if m['submitted_by'] %}<p class="hint">Déclaré par {{ m['submitted_by'] }}</p>{% endif %}
@@ -55,7 +55,7 @@
     <div class="card-body">
       <strong>{{ x['mail_date'] | fr_date }} · {{ directions.get(x['direction'], x['direction']) }}</strong>
       {% if x['important'] %} · ⭐ important{% endif %}
-      — {{ x['proposed_people'] }}
+      · {{ x['proposed_people'] }}
       <p>{{ x['summary'] }}</p>
       {% if x['document_orig_name'] %}<p class="hint">📎 {{ x['document_orig_name'] }}</p>{% endif %}
       {% if x['submitted_by'] %}<p class="hint">Déclaré par {{ x['submitted_by'] }}</p>{% endif %}
@@ -74,7 +74,7 @@
     <div class="card-body">
       <strong>{{ i['intervention_date'] | fr_date }}</strong>
       {% if i['intervention_type'] %} · <span class="tag tag-intervention">{{ i['intervention_type'] }}</span>{% endif %}
-      — {{ i['proposed_organisation'] }} · {{ i['proposed_people'] }}
+      · {{ i['proposed_organisation'] }} · {{ i['proposed_people'] }}
       <p>{{ i['summary'] or '' }}</p>
       <p class="hint">{{ ui.ext_link(i['link']) }}</p>
       {% if i['submitted_by'] %}<p class="hint">Déclaré par {{ i['submitted_by'] }}</p>{% endif %}
@@ -93,7 +93,7 @@
     <div class="card-body">
       <strong>{{ c['published_on'] | fr_date }}</strong>
       {% if c['content_type'] %} · <span class="tag tag-content">{{ c['content_type'] }}</span>{% endif %}
-      — {{ c['proposed_organisation'] }} · {{ c['proposed_people'] }}
+      · {{ c['proposed_organisation'] }} · {{ c['proposed_people'] }}
       <p>{{ c['summary'] or '' }}</p>
       <p class="hint">{{ ui.ext_link(c['link']) }}</p>
       {% if c['submitted_by'] %}<p class="hint">Déclaré par {{ c['submitted_by'] }}</p>{% endif %}
@@ -112,7 +112,7 @@
     <div class="card-body">
       <strong>{{ p['name'] }}</strong>
       {% if p['contact_type'] %} {{ ui.contact_tag(p['contact_type']) }}{% endif %}
-      {% if p['role'] %} — {{ p['role'] }}{% endif %}
+      {% if p['role'] %} · {{ p['role'] }}{% endif %}
       {% if p['proposed_organisation'] %} <span class="muted">({{ p['proposed_organisation'] }})</span>{% endif %}
       {% if p['stance'] %}<p class="hint">Position : {{ p['stance'] }}</p>{% endif %}
       {% if p['notes'] %}<p>{{ p['notes'] }}</p>{% endif %}
@@ -132,7 +132,7 @@
     <div class="card-body">
       <strong>{{ o['name'] }}</strong>
       {% if o['org_type'] %} {{ ui.org_tag(o['org_type']) }}{% endif %}
-      {% if o['media_type'] or o['chambre'] %} — {{ o['media_type'] or o['chambre'] }}{% endif %}
+      {% if o['media_type'] or o['chambre'] %} · {{ o['media_type'] or o['chambre'] }}{% endif %}
       {% if o['stance'] %}<p class="hint">Position : {{ o['stance'] }}</p>{% endif %}
       {% if o['link'] %}<p class="hint">{{ ui.ext_link(o['link']) }}</p>{% endif %}
       {% if o['notes'] %}<p>{{ o['notes'] }}</p>{% endif %}

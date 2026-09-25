@@ -71,7 +71,7 @@
       <label for="religion">Religion <span class="muted">(facultatif)</span></label>
       <select id="religion" name="religion" data-religion>
         <option value="" {% if not religion %}selected{% endif %}>
-          — Choisir une religion —
+          Choisir une religion
         </option>
         {% for r in religions %}
           <option value="{{ r }}" {% if religion == r %}selected{% endif %}>{{ r }}</option>
@@ -82,7 +82,7 @@
       </p>
       {% for rel, roles in roles_by_religion.items() %}
       <div data-religion-block="{{ rel }}" {% if religion != rel %}hidden{% endif %}>
-        <label>Fonction <span class="muted">(facultatif — plusieurs choix possibles)</span></label>
+        <label>Fonction <span class="muted">(facultatif, plusieurs choix possibles)</span></label>
         <div class="checklist">
           {% for r in roles %}
             <label class="check">
@@ -108,7 +108,7 @@
         décrivez-la dans les notes, plus bas.</p>
 
     {% else %}
-      <label>Fonction <span class="muted">(facultatif — plusieurs choix possibles)</span></label>
+      <label>Fonction <span class="muted">(facultatif, plusieurs choix possibles)</span></label>
       <div class="checklist" data-portfolio-roles="{{ portfolio_roles|join('|') }}"
            data-role-detail-roles="{{ role_detail_roles|join('|') }}">
         {% for r in roles_by_contact_type[type] %}
@@ -177,9 +177,9 @@
   <div class="person-picker">
     <label for="person_picker" class="muted">Cocher une personne depuis la liste</label>
     <select id="person_picker" data-check-group="person_ids">
-      <option value="">— Choisir une personne —</option>
+      <option value="">Choisir une personne</option>
       {% for p in people %}
-      <option value="{{ p['id'] }}" data-genres="{{ p['genres'] or '' }}">{{ p['name'] }}{% if p['organisation_names'] %} — {{ p['organisation_names'] }}{% endif %}</option>
+      <option value="{{ p['id'] }}" data-genres="{{ p['genres'] or '' }}">{{ p['name'] }}{% if p['organisation_names'] %} · {{ p['organisation_names'] }}{% endif %}</option>
       {% endfor %}
     </select>
   </div>
@@ -188,7 +188,7 @@
       <label class="check" data-genres="{{ p['genres'] or '' }}">
         <input type="checkbox" name="person_ids" value="{{ p['id'] }}"
                {% if (p['id']|string) in selected_ids %}checked{% endif %}>
-        {{ p['name'] }}{% if p['organisation_names'] %} <span class="muted">— {{ p['organisation_names'] }}</span>{% endif %}
+        {{ p['name'] }}{% if p['organisation_names'] %} <span class="muted">· {{ p['organisation_names'] }}</span>{% endif %}
       </label>
     {% else %}
       <p class="muted">Aucune personne enregistrée.</p>
@@ -208,11 +208,11 @@
    without a round trip; the server keeps only the ids of the matching type. #}
 {% macro organisation_checklist(organisations, selected_ids) %}
 <div class="field" id="organisation-field">
-  <label>Organisation<span class="muted"> — plusieurs choix possibles</span></label>
+  <label>Organisation<span class="muted"> (plusieurs choix possibles)</span></label>
   <div class="person-picker">
     <label for="organisation_picker" class="muted">Cocher une organisation depuis la liste</label>
     <select id="organisation_picker" data-check-group="organisation_ids">
-      <option value="">— Choisir une organisation —</option>
+      <option value="">Choisir une organisation</option>
       {% for o in organisations %}
       <option value="{{ o['id'] }}" data-org-type="{{ o['org_type'] }}">{{ o['name'] }}</option>
       {% endfor %}
@@ -224,7 +224,7 @@
         <input type="checkbox" name="organisation_ids" value="{{ o['id'] }}"
                {% if (o['id']|string) in selected_ids %}checked{% endif %}>
         {{ o['name'] }}
-        <span class="muted">— {{ o['media_type'] or o['chambre'] or o['religion'] or o['org_type'] }}</span>
+        <span class="muted">· {{ o['media_type'] or o['chambre'] or o['religion'] or o['org_type'] }}</span>
       </label>
     {% else %}
       <p class="muted">Aucune organisation enregistrée.</p>
@@ -236,7 +236,7 @@
     <a href="{{ url_for('new_organisation', org_type='Média') }}">Ajouter un média</a>.
   </p>
   <p class="hint" data-org-hint-politique hidden>
-    Le groupe politique de cette personne — obligatoire.
+    Le groupe politique de cette personne (obligatoire).
     Un groupe manque ?
     <a href="{{ url_for('new_organisation', org_type='Groupe politique') }}">Ajouter un groupe politique</a>.
   </p>
@@ -420,7 +420,7 @@
   <div class="depute-picker">
     <label for="organisation_name_picker">Choisir depuis la liste</label>
     <select id="organisation_name_picker" data-target="proposed_organisation"{% if not multiple %} data-single{% endif %}>
-      <option value="">— Choisir une organisation —</option>
+      <option value="">Choisir une organisation</option>
       {% for group in org_types %}
         {% set in_group = organisation_names | selectattr('org_type', 'equalto', group) | list %}
         {% if in_group %}
@@ -441,7 +441,7 @@
 {% endmacro %}
 
 {# « Personnes concernées » on the public forms: free text, plus a picker of
-   the people it is safe to list publicly (see _public_person_names). The field
+   everyone on file (see _public_person_names). The field
    stays free text because a declarant may well name somebody who has no fiche
    yet — the picker only spares them the typing, exactly as
    proposed_organisation_field does for the organisation. #}
@@ -454,9 +454,9 @@
   <div class="depute-picker">
     <label for="person_picker">Ajouter une personne depuis la liste</label>
     <select id="person_picker" data-target="proposed_people">
-      <option value="">— Choisir une personne —</option>
+      <option value="">Choisir une personne</option>
       {% for p in person_names %}
-      <option value="{{ p['name'] }}">{{ p['name'] }}{% if p['role'] %} — {{ p['role'] }}{% endif %}</option>
+      <option value="{{ p['name'] }}">{{ p['name'] }}{% if p['role'] %} · {{ p['role'] }}{% endif %}</option>
       {% endfor %}
     </select>
   </div>

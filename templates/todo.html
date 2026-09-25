@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}À faire{% endblock %}
 {% block content %}
+{# Filter on who is to do it, in the browser; each browser remembers its own
+   choice, so everyone lands on their own list. Items carry data-by: the
+   names of who is to do them, comma-separated, empty for « quiconque ». #}
+{% macro by_filter(key) %}
+<select class="todo-filter" data-todo-filter="{{ key }}"
+        aria-label="Filtrer par utilisateurice">
+  <option value="">Tout le monde</option>
+  {% for mo in moderators %}<option value="{{ mo['name'] }}">{{ mo['name'] }}</option>{% endfor %}
+  <option value="__anyone__">Quiconque</option>
+</select>
+{% endmacro %}
 <div class="page-head">
   <h1 class="todo-title-head">TODO</h1>
   <span class="head-actions">
@@ -23,11 +34,11 @@
   <li class="todo-item todo-meeting">
     <form method="post" action="{{ url_for('toggle_meeting_done', meeting_id=m['id']) }}">
       <button type="submit" class="todo-check" role="checkbox" aria-checked="false"
-              title="Marquer comme faite — la rencontre passe dans Fait">☐</button>
+              title="Marquer comme faite : la rencontre passe dans Fait">☐</button>
     </form>
     <div class="todo-body">
       <a class="todo-title" href="{{ url_for('meeting_detail', meeting_id=m['id']) }}">
-        {% if m['meeting_time'] %}{{ m['meeting_time'] }} — {% endif %}
+        {% if m['meeting_time'] %}{{ m['meeting_time'] }} · {% endif %}
         {{ m['person_names'] or 'Rencontre' }}
       </a>
       <p class="todo-sub">{{ m['summary'] }}</p>
@@ -51,19 +62,21 @@
 
 {# ---------------- Relances dues ---------------- #}
 <h2 class="todo-head todo-head-relance">
-  Relances à envoyer <span class="muted">({{ due|length }})</span>
+  Relances à envoyer <span class="muted">(<span data-todo-count="relances">{{ due|length }}</span>)</span>
+  {{ by_filter('relances') }}
 </h2>
 <p class="hint">Relances prévues aujourd'hui ou déjà passées. Cocher une relance
   la retire d'ici et la place dans <a href="{{ url_for('fait') }}">Fait</a>, où
   vous pouvez la décocher pour la faire revenir.</p>
 {% if due %}
-<ul class="todo-list">
+<div data-todo-filtered="relances">
+<ul class="todo-list" data-todo-block>
   {% for r in due %}
-  <li class="todo-item todo-relance">
+  <li class="todo-item todo-relance" data-by="{{ r['relance_by'] or '' }}">
     <form method="post"
           action="{{ url_for('toggle_follow_up_done', kind=r['kind'], rec_id=r['rec_id']) }}">
       <button type="submit" class="todo-check" role="checkbox" aria-checked="false"
-              title="Marquer comme faite — la relance passe dans Fait">☐</button>
+              title="Marquer comme faite : la relance passe dans Fait">☐</button>
     </form>
     <div class="todo-body">
       <a class="todo-title"
@@ -77,8 +90,8 @@
           <span class="due due-overdue">en retard de {{ -d }}&nbsp;j</span>
         {% else %}
           <span class="due due-soon">aujourd'hui</span>
-        {% endif %}
-        — suite {% if r['kind'] == 'meeting' %}à la rencontre{% else %}au courriel{% endif %}
+        {% endif %},
+        suite {% if r['kind'] == 'meeting' %}à la rencontre{% else %}au courriel{% endif %}
         du {{ r['on_date'] | fr_date }}
       </p>
       {# Whoever wrote to them last picks the relance back up; « quiconque »
@@ -98,27 +111,37 @@
   </li>
   {% endfor %}
 </ul>
+<p class="muted" data-todo-empty hidden>Aucune relance pour cette utilisateurice.</p>
+</div>
 {% else %}
 <p class="muted">Aucune relance en attente.</p>
 {% endif %}
 
 {# ---------------- À contacter ---------------- #}
 <h2 class="todo-head todo-head-contact">
-  À contacter <span class="muted">({{ to_contact|length }})</span>
-  <a class="btn btn-primary btn-inline" href="{{ url_for('to_contact_picker') }}">
-    + Ajouter des personnes</a>
+  À contacter <span class="muted">(<span data-todo-count="contact">{{ to_contact|length }}</span>)</span>
+  {{ by_filter('contact') }}
 </h2>
+<p><a class="btn btn-primary" href="{{ url_for('to_contact_split') }}">
+  + Répartir à contacter</a></p>
 <p class="hint">Les personnes à qui écrire. Cocher une personne la retire d'ici et
   la place dans <a href="{{ url_for('fait') }}">Fait</a>, où vous pouvez la
   décocher pour la faire revenir ou la retirer de la liste.</p>
-{% if to_contact %}
+{% if to_contact_blocks %}<div data-todo-filtered="contact">{% endif %}
+{% for assignee, rows in to_contact_blocks %}
+<div data-todo-block>
+{# A heading only once the list has been shared out at all. #}
+{% if to_contact_blocks|length > 1 or assignee %}
+<h3 class="todo-assignee">{{ assignee or 'Quiconque' }}
+  <span class="muted">({{ rows|length }})</span></h3>
+{% endif %}
 <ul class="todo-list">
-  {% for c in to_contact %}
-  <li class="todo-item todo-contact">
+  {% for c in rows %}
+  <li class="todo-item todo-contact" data-by="{{ assignee or '' }}">
     <form method="post"
           action="{{ url_for('toggle_to_contact_done', person_id=c['id']) }}">
       <button type="submit" class="todo-check" role="checkbox" aria-checked="false"
-              title="Marquer comme contactée — la personne passe dans Fait">☐</button>
+              title="Marquer comme contactée : la personne passe dans Fait">☐</button>
     </form>
     <div class="todo-body">
       <a class="todo-title" href="{{ url_for('person_detail', person_id=c['id']) }}">
@@ -142,8 +165,13 @@
   </li>
   {% endfor %}
 </ul>
+</div>
 {% else %}
 <p class="muted">Personne à contacter pour le moment.</p>
+{% endfor %}
+{% if to_contact_blocks %}
+<p class="muted" data-todo-empty hidden>Personne à contacter pour cette utilisateurice.</p>
+</div>
 {% endif %}
 
 {# ---------------- Rencontres à venir : inscriptions ---------------- #}
@@ -151,7 +179,7 @@
   Rencontres à venir <span class="muted">({{ upcoming|length }})</span>
 </h2>
 <p class="hint">Inscrivez les utilisateurices qui s'y rendent. Une rencontre devrait
-  réunir au moins {{ min_participants }} personnes — en dessous, elle est signalée en rouge.
+  réunir au moins {{ min_participants }} personnes. En dessous, elle est signalée en rouge.
   Ces inscriptions sont les participant·es de la rencontre : elles sont déjà
   enregistrées dessus, rien à reporter. Les rencontres dont la date n'est pas
   encore fixée ne sont pas ici mais dans
@@ -172,12 +200,12 @@
     <div class="todo-body">
       <a class="todo-title" href="{{ url_for('meeting_detail', meeting_id=m['id']) }}">
         {{ m['meeting_date'] | fr_date }}{% if m['meeting_time'] %} à {{ m['meeting_time'] }}{% endif %}
-        — {{ m['person_names'] or 'Rencontre' }}
+        · {{ m['person_names'] or 'Rencontre' }}
       </a>
       <p class="todo-sub">
         <span class="signup-count"><span data-count>{{ m['participant_count'] }}</span>
           inscrit<span data-plural>{{ '' if m['participant_count'] == 1 else 's' }}</span>·e<span data-plural>{{ '' if m['participant_count'] == 1 else 's' }}</span></span>
-        <span class="warn" data-short-note {% if enough %}hidden{% endif %}>— il en faut au moins {{ min_participants }}</span>
+        <span class="warn" data-short-note {% if enough %}hidden{% endif %}>(il en faut au moins {{ min_participants }})</span>
       </p>
       {# data-autosave: ticking a name signs them up straight away. The count
          beside it is simply the number of boxes ticked, so the page keeps it
@@ -201,7 +229,7 @@
            string stays in the templates. #}
         <span class="autosave-status" data-autosave-status aria-live="polite"
               data-saving="Enregistrement…" data-saved="✓ Enregistré"
-              data-failed="⚠ Échec de l'enregistrement — utilisez le bouton"></span>
+              data-failed="⚠ Échec de l'enregistrement : utilisez le bouton"></span>
         {% endif %}
       </form>
     </div>

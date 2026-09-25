@@ -20,6 +20,7 @@ Run with:  uv run flask --app app run --debug
 """
 
 import calendar as pycalendar
+import math
 import os
 import random
 import re
@@ -485,32 +486,6 @@ PORTFOLIO_ROLES = [
     "Secrétaire d'État",
 ]
 
-# Roles whose holders may be listed to anonymous visitors on the /declarer
-# forms. These are public officeholders: who they are and what seat they hold
-# is already published by the Assemblée, the Sénat, the Parlement européen and
-# the Journal officiel, so naming them here reveals nothing new.
-#
-# Deliberately absent, and the reason the list is a whitelist rather than "all
-# of ROLES": "Membre d'un cabinet gouvernemental" (advisors and staff, not
-# officeholders), "Personnalité publique" (a catch-all a moderator may use for
-# a journalist or an activist), "Groupe de travail", and the three local
-# mandates — Conseiller·ère municipal·e, départemental·e and régional·e — which
-# are elected but are kept off the anonymous forms by choice. Those stay
-# visible to logged-in members only, as does every column other than the name.
-PUBLIC_ROLES = [
-    "Président·e de la République",
-    "Premier·e ministre",
-    "Ministre",
-    "Ministre délégué·e",
-    "Secrétaire d'État",
-    "Secrétaire général·e",
-    "Autre fonction gouvernementale",
-    "Sénateur·ice",
-    "Député·e",
-    "Député·e européen·ne",
-    "Maire·sse",
-]
-
 
 def name_sort_key(value):
     """Sort key putting a person under their nom de famille, not their prénom.
@@ -883,6 +858,7 @@ def init_db():
             religion        TEXT,   -- Religieux·se only, see RELIGIONS
             territoire      TEXT,   -- Religieux·se only: diocèse, paroisse…
             in_office       INTEGER NOT NULL DEFAULT 1,  -- 0 = mandate ended, kept for history
+            signed_declaration INTEGER NOT NULL DEFAULT 0,  -- « A signé la déclaration de PauseIA »
             added_by        INTEGER REFERENCES moderators(id) ON DELETE SET NULL,
             validated_by    INTEGER REFERENCES moderators(id) ON DELETE SET NULL,
             created_at      TEXT NOT NULL
@@ -983,11 +959,13 @@ def init_db():
 
         -- « À contacter »: people someone has decided to write to, waiting on
         -- /todo until the box is ticked, after which they live on /fait. The
-        -- list is built by hand from /todo/a-contacter; nothing adds to it
-        -- automatically, and a person appears at most once (PRIMARY KEY).
+        -- list is filled by the répartition (/todo/a-contacter/repartition),
+        -- and a person appears at most once (PRIMARY KEY). assigned_to is the
+        -- utilisateurice who is to write; NULL means « Quiconque » (anyone).
         CREATE TABLE IF NOT EXISTS to_contact (
             person_id  INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
             added_by   INTEGER REFERENCES moderators(id) ON DELETE SET NULL,
+            assigned_to INTEGER REFERENCES moderators(id) ON DELETE SET NULL,
             done       INTEGER NOT NULL DEFAULT 0,
             done_at    TEXT,
             created_at TEXT NOT NULL
@@ -1064,6 +1042,7 @@ def init_db():
             territoire      TEXT,
             political_group TEXT,   -- nullable: an anonymous draft may omit it
             stance          TEXT,
+            signed_declaration INTEGER NOT NULL DEFAULT 0,
             first_contacted TEXT,
             follow_up_date  TEXT,
             notes           TEXT,
@@ -1333,6 +1312,22 @@ def init_db():
         existing = [r[1] for r in db.execute(f"PRAGMA table_info({table})")]
         if "genre" not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN genre TEXT")
+    # --- « A signé la déclaration de PauseIA » ---------------------------- #
+    # Oui (1) / Non (0), mandatory with Non by default: every person recorded
+    # before the field existed reads Non, and so does anyone the utils/
+    # importers add, since they do not name the column.
+    for table in ("persons", "pending_persons"):
+        existing = [r[1] for r in db.execute(f"PRAGMA table_info({table})")]
+        if "signed_declaration" not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN signed_declaration "
+                       "INTEGER NOT NULL DEFAULT 0")
+    # --- « Attribuée à » on « À contacter » ------------------------------- #
+    # Who is to write to the person, set by the répartition. Lists built before
+    # it existed have nobody assigned, which is what NULL says.
+    to_contact_cols = [r[1] for r in db.execute("PRAGMA table_info(to_contact)")]
+    if "assigned_to" not in to_contact_cols:
+        db.execute("ALTER TABLE to_contact ADD COLUMN assigned_to INTEGER "
+                   "REFERENCES moderators(id) ON DELETE SET NULL")
     db.commit()
     _relax_political_group(db)
     _seed_organisations_from_groups(db)
@@ -1404,6 +1399,7 @@ PERSONS_REBUILD_SQL = """
         religion        TEXT,
         territoire      TEXT,
         in_office       INTEGER NOT NULL DEFAULT 1,
+        signed_declaration INTEGER NOT NULL DEFAULT 0,
         added_by        INTEGER REFERENCES moderators(id) ON DELETE SET NULL,
         validated_by    INTEGER REFERENCES moderators(id) ON DELETE SET NULL,
         created_at      TEXT NOT NULL
@@ -2586,8 +2582,8 @@ def last_sender_sql(alias="p"):
 # How many courriels PauseIA has sent to a person. Only the ones an
 # utilisateurice stands behind count: a courriel citoyen imported from the
 # campagne mailbox has no « Qui a reçu / envoyé » and no « Validé par », so it
-# says nothing about how much *we* have written to them — which is exactly the
-# question the « À contacter » filter asks.
+# says nothing about how much *we* have written to them, which is what the
+# « À contacter » list shows next to each person.
 PAUSEIA_MAIL_COUNT_SQL = """(
     SELECT COUNT(*)
       FROM mails ma
@@ -2684,11 +2680,21 @@ def todo():
         for m in upcoming
     }
 
+    # One block per utilisateurice; the rows arrive sorted that way, with the
+    # « Quiconque » (NULL) last (see _to_contact_rows).
+    to_contact = _to_contact_rows(db, done=0)
+    to_contact_blocks = []
+    for r in to_contact:
+        if not to_contact_blocks or to_contact_blocks[-1][0] != r["assigned_to_name"]:
+            to_contact_blocks.append((r["assigned_to_name"], []))
+        to_contact_blocks[-1][1].append(r)
+
     return render_template(
         "todo.html",
         meetings_today=meetings_today,
         due=due,
-        to_contact=_to_contact_rows(db, done=0),
+        to_contact=to_contact,
+        to_contact_blocks=to_contact_blocks,
         upcoming=upcoming,
         signed_up=signed_up,
         moderators=_moderators(db),
@@ -2790,10 +2796,8 @@ def toggle_follow_up_done(kind, rec_id):
 # --------------------------------------------------------------------------- #
 # « À contacter » — people someone has decided to write to
 # --------------------------------------------------------------------------- #
-# A plain to-do list of people, built by hand and ticked off like a relance:
-# ticking moves the person to /fait, unticking brings them back. Nothing puts
-# anyone on the list automatically — deciding who is worth writing to is the
-# whole point of the list, so it is never guessed.
+# A to-do list of people, filled by the répartition below and ticked off like
+# a relance: ticking moves the person to /fait, unticking brings them back.
 
 def _to_contact_rows(db, done):
     """The « À contacter » list, pending (done=0) or dealt with (done=1)."""
@@ -2807,11 +2811,16 @@ def _to_contact_rows(db, done):
                  WHERE po.person_id = p.id)     AS organisation_names,
                (SELECT mo.name FROM moderators mo
                  WHERE mo.id = t.added_by)      AS added_by_name,
+               t.assigned_to,
+               (SELECT mo.name FROM moderators mo
+                 WHERE mo.id = t.assigned_to)   AS assigned_to_name,
                {PAUSEIA_MAIL_COUNT_SQL}         AS pauseia_mails
         FROM to_contact t
         JOIN persons p ON p.id = t.person_id
         WHERE t.done = ?
-        ORDER BY {"name_key(p.name)" if not done
+        -- Pending: one block per utilisateurice, « Quiconque » (NULL) last.
+        ORDER BY {"assigned_to_name IS NULL, assigned_to_name COLLATE NOCASE, "
+                  "name_key(p.name)" if not done
                   else "COALESCE(t.done_at, t.created_at) DESC, name_key(p.name)"}
         """,
         (done,),
@@ -2821,117 +2830,13 @@ def _to_contact_rows(db, done):
 def _to_int(value):
     """A whole number from a form field, or None when blank or unusable.
 
-    A filter nobody filled in must not silently become 0, which would be a
-    filter of its own.
+    A field nobody filled in must not silently become 0.
     """
     value = (value or "").strip()
     try:
         return int(value)
     except ValueError:
         return None
-
-
-@app.route("/todo/a-contacter")
-@login_required
-def to_contact_picker():
-    """Pick people to add to « À contacter ».
-
-    Three filters, because they are the questions actually asked when building
-    such a list: which organisation, which type de contact, and how much we
-    have already written to them (PAUSEIA_MAIL_COUNT_SQL — courriels citoyens
-    do not count).
-    """
-    db = get_db()
-    org_id = _valid_organisation(db, request.args.get("org"))
-    contact_type = (request.args.get("contact_type") or "").strip()
-    if contact_type not in CONTACT_TYPES:
-        contact_type = ""
-    max_mails = _to_int(request.args.get("max_mails"))
-    min_mails = _to_int(request.args.get("min_mails"))
-
-    where, params = [], []
-    if org_id is not None:
-        where.append(
-            "p.id IN (SELECT po.person_id FROM person_organisations po "
-            "WHERE po.organisation_id = ?)"
-        )
-        params.append(org_id)
-    if contact_type:
-        where.append("p.contact_type = ?")
-        params.append(contact_type)
-    if min_mails is not None:
-        where.append(f"{PAUSEIA_MAIL_COUNT_SQL} >= ?")
-        params.append(min_mails)
-    if max_mails is not None:
-        where.append(f"{PAUSEIA_MAIL_COUNT_SQL} <= ?")
-        params.append(max_mails)
-    clause = ("WHERE " + " AND ".join(where)) if where else ""
-
-    rows = db.execute(
-        f"""
-        SELECT p.id, p.name, p.role, p.contact_type,
-               (SELECT GROUP_CONCAT(o.name, ', ')
-                  FROM person_organisations po
-                  JOIN organisations o ON o.id = po.organisation_id
-                 WHERE po.person_id = p.id) AS organisation_names,
-               {PAUSEIA_MAIL_COUNT_SQL}     AS pauseia_mails,
-               EXISTS (SELECT 1 FROM to_contact t
-                        WHERE t.person_id = p.id AND t.done = 0) AS already
-        FROM persons p
-        {clause}
-        ORDER BY name_key(p.name)
-        """,
-        params,
-    ).fetchall()
-
-    # Grouped by organisation so a whole newsroom, group or diocèse can be
-    # ticked in one go. Someone who belongs to two organisations appears under
-    # both; the form collapses the duplicates on submit, and the JS keeps the
-    # boxes in step so ticking one ticks the other.
-    groups = defaultdict(list)
-    for r in rows:
-        for name in (r["organisation_names"] or "").split(", "):
-            groups[name or "Sans organisation"].append(r)
-    grouped = sorted(
-        groups.items(),
-        # « Sans organisation » is not an organisation: it goes last.
-        key=lambda kv: (kv[0] == "Sans organisation", kv[0].lower()),
-    )
-
-    return render_template(
-        "to_contact_picker.html",
-        grouped=grouped,
-        total=len(rows),
-        organisations=_organisation_choices(db),
-        moderators=_moderators(db),
-        org=str(org_id) if org_id is not None else "",
-        contact_type=contact_type,
-        min_mails="" if min_mails is None else min_mails,
-        max_mails="" if max_mails is None else max_mails,
-    )
-
-
-@app.route("/todo/a-contacter/ajouter", methods=["POST"])
-@login_required
-def add_to_contact():
-    db = get_db()
-    person_ids = _ids_from_form(db, "person_ids", "persons")
-    added_by = _valid_moderator(db, request.form.get("added_by"))
-    if not person_ids:
-        flash("Sélectionnez au moins une personne à contacter.", "error")
-        return redirect(request.referrer or url_for("to_contact_picker"))
-    # Someone already on the list stays where they are, ticked or not: OR
-    # IGNORE so re-adding them never silently un-ticks work already done.
-    db.executemany(
-        "INSERT OR IGNORE INTO to_contact (person_id, added_by, created_at) "
-        "VALUES (?, ?, ?)",
-        [(pid, added_by, _now()) for pid in person_ids],
-    )
-    db.commit()
-    n = len(person_ids)
-    flash(f"{n} personne{'' if n == 1 else 's'} ajoutée{'' if n == 1 else 's'} "
-          "à « À contacter ».", "success")
-    return redirect(url_for("todo"))
 
 
 @app.route("/todo/a-contacter/<int:person_id>/done", methods=["POST"])
@@ -2960,6 +2865,328 @@ def remove_to_contact(person_id):
     db.commit()
     flash("Personne retirée de « À contacter ».", "success")
     return redirect(request.referrer or url_for("fait"))
+
+
+# --------------------------------------------------------------------------- #
+# Répartition of « À contacter » between utilisateurices
+# --------------------------------------------------------------------------- #
+# Several organisations, a target for each (a number of people or a share of
+# the organisation, rounded up), several utilisateurices who may each refuse
+# some of those organisations. People are drawn at random and handed out so
+# that everyone gets as close to the same number as the refusals allow. Nothing
+# is saved until the preview is confirmed.
+
+def _split_to_contact(groups, moderator_ids, exclusions, rng=random):
+    """Draw people from each group and share them out between moderators.
+
+    `groups` is a list of dicts {id, name, size, members, target, unit}: `members`
+    the ids that may be drawn, `size` the whole organisation a percentage is
+    taken of, `unit` "n" or "pct". An organisation with fewer people to draw
+    than asked simply gives what it has.
+    `exclusions` maps a moderator id to the set of group ids they refuse.
+
+    Returns (assignments, errors): assignments are
+    (person_id, group_id, moderator_id, allowed_moderator_ids) tuples.
+    """
+    errors, drawn = [], []
+    taken = set()
+    for g in groups:
+        if g["unit"] == "pct":
+            wanted = math.ceil(g["target"] * g["size"] / 100)
+        else:
+            wanted = g["target"]
+        # Someone in two of the chosen organisations is drawn at most once.
+        pool = [pid for pid in g["members"] if pid not in taken]
+        picked = rng.sample(pool, min(wanted, len(pool)))
+        taken.update(picked)
+        allowed = [m for m in moderator_ids
+                   if g["id"] not in exclusions.get(m, set())]
+        if picked and not allowed:
+            errors.append("Toutes les utilisateurices sélectionnées excluent "
+                          f"« {g['name']} ».")
+        drawn.extend((pid, g["id"], allowed) for pid in picked)
+    if errors or not drawn:
+        return [], errors
+
+    # Most constrained first, each to whoever has least so far (ties at random).
+    rng.shuffle(drawn)
+    drawn.sort(key=lambda d: len(d[2]))
+    load = {m: 0 for m in moderator_ids}
+    owner = {}
+    for pid, _, allowed in drawn:
+        low = min(load[m] for m in allowed)
+        owner[pid] = rng.choice([m for m in allowed if load[m] == low])
+        load[owner[pid]] += 1
+
+    # Greedy can still leave A with 2 more than C when A's people may only go
+    # to B and B's only to C. Look for such a chain of moves from a busy
+    # moderator to one with at least 2 fewer, and shift one person along it;
+    # each shift lowers the spread, so this ends.
+    allowed_of = {pid: allowed for pid, _, allowed in drawn}
+    while True:
+        for src in sorted(moderator_ids, key=lambda m: -load[m]):
+            prev = {src: None}          # moderator -> (from, person moved)
+            queue, dst = [src], None
+            while queue and dst is None:
+                u = queue.pop(0)
+                for pid, m in owner.items():
+                    if m != u:
+                        continue
+                    for v in allowed_of[pid]:
+                        if v not in prev:
+                            prev[v] = (u, pid)
+                            if load[v] <= load[src] - 2:
+                                dst = v
+                                break
+                            queue.append(v)
+                    if dst is not None:
+                        break
+            if dst is not None:
+                v = dst
+                while prev[v] is not None:
+                    u, pid = prev[v]
+                    owner[pid] = v
+                    v = u
+                load[src] -= 1
+                load[dst] += 1
+                break
+        else:
+            break
+
+    assignments = [(pid, gid, owner[pid], allowed) for pid, gid, allowed in drawn]
+    return assignments, errors
+
+
+# « Quiconque »: a share of the list left to whoever takes it. Offered next to
+# the utilisateurices whatever the moderators table holds, and stored as
+# assigned_to = NULL — which is also what entries made before the répartition
+# carry, and they are indeed anyone's.
+ANYONE = {"id": 0, "name": "Quiconque"}
+
+
+def _pending_to_contact(db):
+    return {r[0] for r in db.execute(
+        "SELECT person_id FROM to_contact WHERE done = 0")}
+
+
+def _split_organisations(db):
+    """Organisations with how many people are in them, for the setup form.
+
+    A person whose mandate has ended (in_office = 0) is not counted: they are
+    kept for history, not to be written to.
+    """
+    return db.execute(
+        """
+        SELECT o.id, o.name, o.org_type,
+               COUNT(p.id) AS size,
+               COUNT(t.person_id) AS pending
+          FROM organisations o
+          JOIN person_organisations po ON po.organisation_id = o.id
+          JOIN persons p ON p.id = po.person_id AND p.in_office = 1
+          LEFT JOIN to_contact t ON t.person_id = p.id AND t.done = 0
+         GROUP BY o.id
+         ORDER BY o.name COLLATE NOCASE
+        """
+    ).fetchall()
+
+
+def _split_member_stats(db):
+    """Per organisation, one [courriels PauseIA, déjà en attente, a signé la
+    déclaration] triple per in-office member: what the page needs to count, as
+    the filters are typed, who they would leave. Same rules as the draw in
+    to_contact_split."""
+    stats = defaultdict(list)
+    for r in db.execute(
+        f"""
+        SELECT po.organisation_id AS oid, {PAUSEIA_MAIL_COUNT_SQL} AS n,
+               EXISTS (SELECT 1 FROM to_contact t
+                        WHERE t.person_id = p.id AND t.done = 0) AS pending,
+               p.signed_declaration AS signed
+          FROM person_organisations po
+          JOIN persons p ON p.id = po.person_id AND p.in_office = 1
+        """
+    ):
+        stats[r["oid"]].append([r["n"], r["pending"], r["signed"]])
+    return stats
+
+
+@app.route("/todo/a-contacter/repartition", methods=["GET", "POST"])
+@login_required
+def to_contact_split():
+    """Set up a répartition (GET) or draw one and show it for checking (POST).
+
+    Posting again with the same settings is « Relancer le tirage »: the draw is
+    random, so it simply comes out different.
+    """
+    db = get_db()
+    organisations = _split_organisations(db)
+    moderators = list(_moderators(db)) + [ANYONE]
+    orgs_by_id = {o["id"]: o for o in organisations}
+    mods_by_id = {m["id"]: m for m in moderators}
+
+    form = {"org_ids": [], "targets": {}, "units": {},
+            "type_targets": {}, "type_units": {},
+            "min_mails": "", "max_mails": "", "skip_pending": False,
+            "declaration": "",
+            "moderator_ids": [], "exclusions": {}}
+    preview = None
+    if request.method == "POST":
+        org_ids = [int(v) for v in dict.fromkeys(request.form.getlist("org_ids"))
+                   if v.isdigit() and int(v) in orgs_by_id]
+        moderator_ids = [int(v) for v in
+                         dict.fromkeys(request.form.getlist("moderator_ids"))
+                         if v.isdigit() and int(v) in mods_by_id]
+        form["org_ids"], form["moderator_ids"] = org_ids, moderator_ids
+        problems = []
+        groups = []
+        # Off by default: drawing someone already in « À contacter » is how a
+        # redraw hands them to a different utilisateurice.
+        form["skip_pending"] = bool(request.form.get("skip_pending"))
+        pending = _pending_to_contact(db) if form["skip_pending"] else set()
+        for oid in orgs_by_id:
+            form["targets"][oid] = (request.form.get(f"target-{oid}") or "").strip()
+            form["units"][oid] = ("pct" if request.form.get(f"unit-{oid}") == "pct"
+                                  else "n")
+        # Only people PauseIA has written to between these bounds may be drawn
+        # (PAUSEIA_MAIL_COUNT_SQL: courriels citoyens do not count).
+        min_mails = _to_int(request.form.get("min_mails"))
+        max_mails = _to_int(request.form.get("max_mails"))
+        form["min_mails"] = "" if min_mails is None else min_mails
+        form["max_mails"] = "" if max_mails is None else max_mails
+        # « Déclaration de PauseIA »: everyone, only signatories, or only not.
+        declaration = request.form.get("declaration")
+        form["declaration"] = declaration if declaration in ("oui", "non") else ""
+        wanted_signed = {"oui": 1, "non": 0}.get(form["declaration"])
+        # A type's value stands for each of its organisations left blank.
+        for t in ORG_TYPES:
+            form["type_targets"][t] = (request.form.get(f"type-target-{t}")
+                                       or "").strip()
+            form["type_units"][t] = ("pct" if request.form.get(f"type-unit-{t}")
+                                     == "pct" else "n")
+        for oid in org_ids:
+            o = orgs_by_id[oid]
+            if form["targets"][oid]:
+                target, unit = _to_int(form["targets"][oid]), form["units"][oid]
+            else:
+                target = _to_int(form["type_targets"].get(o["org_type"]))
+                unit = form["type_units"].get(o["org_type"], "n")
+            if target is None or target <= 0 or (unit == "pct" and target > 100):
+                problems.append(f"« {o['name']} » : indiquez un nombre de "
+                                "personnes, ou un pourcentage entre 1 et 100, "
+                                "pour l'organisation ou pour son type.")
+                continue
+            members = db.execute(
+                f"SELECT p.id, p.signed_declaration AS signed, "
+                f"{PAUSEIA_MAIL_COUNT_SQL} AS n FROM persons p "
+                "JOIN person_organisations po ON po.person_id = p.id "
+                "WHERE po.organisation_id = ? AND p.in_office = 1",
+                (oid,)).fetchall()
+            eligible = [m["id"] for m in members
+                        if m["id"] not in pending
+                        and (min_mails is None or m["n"] >= min_mails)
+                        and (max_mails is None or m["n"] <= max_mails)
+                        and (wanted_signed is None or m["signed"] == wanted_signed)]
+            groups.append({"id": oid, "name": o["name"], "size": len(members),
+                           "members": eligible,
+                           "target": target, "unit": unit})
+        for mid in mods_by_id:
+            form["exclusions"][mid] = {
+                int(v) for v in request.form.getlist(f"exclude-{mid}")
+                if v.isdigit() and int(v) in orgs_by_id
+            }
+        if not org_ids:
+            problems.append("Choisissez au moins une organisation.")
+        if not moderator_ids:
+            problems.append("Choisissez au moins une utilisateurice.")
+
+        if problems:
+            for p in problems:
+                flash(p, "error")
+        else:
+            assignments, errors = _split_to_contact(
+                groups, moderator_ids, form["exclusions"])
+            for e in errors:
+                flash(e, "error")
+            if not errors:
+                if not assignments:
+                    flash("Personne à tirer avec ces réglages.", "error")
+                else:
+                    preview = _split_preview(db, assignments,
+                                             moderator_ids, mods_by_id, orgs_by_id)
+
+    return render_template(
+        "to_contact_split.html",
+        organisations=organisations,
+        member_stats=_split_member_stats(db),
+        org_types=ORG_TYPES,
+        moderators=moderators,
+        form=form,
+        preview=preview,
+    )
+
+
+def _split_preview(db, assignments, moderator_ids, mods_by_id, orgs_by_id):
+    """What the preview page needs: people grouped by who is to write."""
+    names = {r["id"]: r for r in db.execute(
+        f"SELECT id, name, role FROM persons WHERE id IN "
+        f"({','.join('?' * len(assignments))})",
+        [a[0] for a in assignments],
+    )}
+    by_mod = {mid: [] for mid in moderator_ids}
+    for pid, gid, mid, allowed in assignments:
+        by_mod[mid].append({
+            "id": pid, "name": names[pid]["name"], "role": names[pid]["role"],
+            "group": orgs_by_id[gid]["name"],
+            "allowed": [mods_by_id[m] for m in allowed],
+            "assigned": mid,
+        })
+    for rows in by_mod.values():
+        rows.sort(key=lambda r: (r["group"].lower(), r["name"].lower()))
+    return {
+        "blocks": [(mods_by_id[mid], by_mod[mid]) for mid in moderator_ids],
+        "total": len(assignments),
+    }
+
+
+@app.route("/todo/a-contacter/repartition/valider", methods=["POST"])
+@login_required
+def confirm_to_contact_split():
+    """Save a checked répartition into « À contacter ».
+
+    Someone already on the list, waiting or on /fait, keeps their one entry
+    and takes the new utilisateurice: that is what a redraw is for.
+    """
+    db = get_db()
+    person_ids = _ids_from_form(db, "person_ids", "persons")
+    rows, skipped = [], 0
+    for pid in person_ids:
+        raw = request.form.get(f"assign-{pid}")
+        mid = _valid_moderator(db, raw)
+        if mid is None and raw != str(ANYONE["id"]):
+            skipped += 1
+            continue
+        rows.append((pid, mid, _now()))
+    if not rows:
+        flash("Rien à enregistrer.", "error")
+        return redirect(url_for("to_contact_split"))
+    db.executemany(
+        """
+        INSERT INTO to_contact (person_id, assigned_to, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(person_id) DO UPDATE SET
+            assigned_to = excluded.assigned_to, done = 0, done_at = NULL,
+            created_at = excluded.created_at
+        """,
+        rows,
+    )
+    db.commit()
+    n = len(rows)
+    flash(f"{n} personne{'' if n == 1 else 's'} réparti{'e' if n == 1 else 'es'} "
+          "dans « À contacter ».", "success")
+    if skipped:
+        flash(f"{skipped} ignorée{'' if skipped == 1 else 's'} : "
+              "utilisateurice introuvable.", "info")
+    return redirect(url_for("todo"))
 
 
 @app.route("/todo/rencontre/<int:meeting_id>/inscriptions", methods=["POST"])
@@ -3308,22 +3535,12 @@ def people():
     contact_type = (request.args.get("contact_type") or "").strip()
     if contact_type not in CONTACT_TYPES:
         contact_type = ""
-    # Counts via correlated subqueries so the relationships don't multiply.
     sql = """
         SELECT p.*,
             (SELECT GROUP_CONCAT(o.name, '|')
                FROM person_organisations po
                JOIN organisations o ON o.id = po.organisation_id
-              WHERE po.person_id = p.id) AS organisation_names,
-            (SELECT COUNT(*) FROM meeting_persons mp
-             WHERE mp.person_id = p.id) AS meeting_count,
-            (SELECT COUNT(*) FROM mail_persons xp
-             JOIN mails x ON x.id = xp.mail_id
-             WHERE xp.person_id = p.id AND x.direction = 'sent') AS mails_sent,
-            (SELECT COUNT(*) FROM mail_persons xp
-             JOIN mails x ON x.id = xp.mail_id
-             WHERE xp.person_id = p.id AND x.direction = 'received') AS mails_received,
-            """ + person_follow_up_sql("p") + """ AS follow_up_date
+              WHERE po.person_id = p.id) AS organisation_names
         FROM persons p
     """
     where, params = [], []
@@ -3351,6 +3568,13 @@ def people():
         "people.html", persons=persons, q=q, contact_type=contact_type,
         counts=counts, total=sum(counts.values()),
     )
+
+
+def _signed_declaration_from_form():
+    """« A signé la déclaration de PauseIA »: 1 (Oui), 0 (Non), or None when
+    the form sent something else. Both forms preselect Non, so None only comes
+    from a hand-made request."""
+    return {"1": 1, "0": 0}.get((request.form.get("signed_declaration") or "").strip())
 
 
 def _save_person(db, person):
@@ -3394,6 +3618,7 @@ def _save_person(db, person):
         religion = ""
         territoire = ""
     stance = (request.form.get("stance") or "").strip()
+    signed_declaration = _signed_declaration_from_form()
     first_contacted, fc_ok = _to_iso(request.form.get("first_contacted"))
     notes = (request.form.get("notes") or "").strip()
     email = (request.form.get("email") or "").strip()
@@ -3426,6 +3651,8 @@ def _save_person(db, person):
         errors.append("Le groupe politique est obligatoire.")
     if not stance:
         errors.append("La position sur PauseIA est obligatoire.")
+    if signed_declaration is None:
+        errors.append("Indiquez si la personne a signé la déclaration de PauseIA.")
     if added_by is None:
         errors.append("Indiquez qui a ajouté la personne.")
     if validated_by is None:
@@ -3440,7 +3667,7 @@ def _save_person(db, person):
               role_detail or None, stance,
               first_contacted or None, notes or None, circonscription or None,
               email or None, phone or None, social_links or None,
-              religion or None, territoire or None,
+              religion or None, territoire or None, signed_declaration,
               added_by, validated_by)
     if person is None:
         cur = db.execute(
@@ -3448,9 +3675,9 @@ def _save_person(db, person):
             INSERT INTO persons (
                 name, contact_type, role, portefeuille, role_detail, stance,
                 first_contacted, notes, circonscription, email, phone,
-                social_links, religion, territoire,
+                social_links, religion, territoire, signed_declaration,
                 added_by, validated_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (*values, _now()),
         )
@@ -3463,7 +3690,7 @@ def _save_person(db, person):
                 portefeuille = ?, role_detail = ?, stance = ?,
                 first_contacted = ?, notes = ?,
                 circonscription = ?, email = ?, phone = ?, social_links = ?,
-                religion = ?, territoire = ?,
+                religion = ?, territoire = ?, signed_declaration = ?,
                 added_by = ?, validated_by = ? WHERE id = ?
             """,
             (*values, person_id),
@@ -4762,26 +4989,18 @@ def _record_submission():
 
 
 def _public_person_names(db):
-    """(name, role) for every public officeholder, for the anonymous
-    declaration pickers.
+    """(name, role) for every person, for the anonymous declaration pickers.
 
-    Restricted to PUBLIC_ROLES: those names and seats are already published
-    elsewhere, so listing them leaks nothing. Any other contact in `persons`
-    stays private to logged-in members, and even here only the name and the
-    role are exposed — never the email, the stance or the notes.
+    The whole table, deliberately: a picker restricted to elected officials
+    made the forms unusable for anything else, and the declarant could type
+    the missing name by hand anyway. All a visitor learns from the list is
+    that we hold a fiche on somebody — not whether we ever contacted them,
+    nor anything they said. Only the name and the role are exposed here;
+    the email, the stance, the notes and every other column stay private to
+    logged-in members.
     """
-    # `role` is a comma-joined list, so an exact match would miss a deputy who
-    # is also a minister. Padding both sides makes this an exact element test
-    # (it can't match a label that merely contains "Député·e").
-    where = " OR ".join(
-        "instr(', ' || role || ', ', ?) > 0" for _ in PUBLIC_ROLES
-    )
-    params = [f", {r}, " for r in PUBLIC_ROLES]
     return db.execute(
-        f"SELECT name, role FROM persons "
-        f"WHERE contact_type = 'Politique' AND ({where}) "
-        f"ORDER BY name_key(name)",
-        params,
+        "SELECT name, role FROM persons ORDER BY name_key(name)"
     ).fetchall()
 
 
@@ -4819,6 +5038,8 @@ def declarer_person():
             role_detail = ""
         proposed_organisation = (request.form.get("proposed_organisation") or "").strip()
         stance = (request.form.get("stance") or "").strip()
+        # Non unless the declarant says Oui; the moderator checks it anyway.
+        signed_declaration = _signed_declaration_from_form() or 0
         first_contacted, fc_ok = _to_iso(request.form.get("first_contacted"))
         notes = (request.form.get("notes") or "").strip()
         submitted_by = (request.form.get("submitted_by") or "").strip()
@@ -4838,13 +5059,14 @@ def declarer_person():
                 INSERT INTO pending_persons (
                     name, contact_type, role, portefeuille, role_detail,
                     proposed_organisation, religion, territoire,
-                    stance, first_contacted, email, phone, notes, submitted_by,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    stance, signed_declaration, first_contacted, email, phone,
+                    notes, submitted_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (name, contact_type or None, role or None, portefeuille or None,
                  role_detail or None, proposed_organisation or None,
                  religion or None, territoire or None, stance or None,
+                 signed_declaration,
                  first_contacted or None,
                  (request.form.get("email") or "").strip() or None,
                  (request.form.get("phone") or "").strip() or None,
@@ -4868,9 +5090,9 @@ def _public_organisation_names(db):
     """Organisation names, for the pickers on the anonymous declaration forms.
 
     A média and a groupe politique are both public entities, so listing their
-    names leaks nothing. People are a different matter: only the public
-    officeholders of _public_person_names are listed, and declarants type any
-    other name for a moderator to match.
+    names leaks nothing. Same for people: _public_person_names lists the whole
+    table, and declarants type any name with no fiche yet for a moderator to
+    match.
     """
     return db.execute(
         "SELECT name, org_type FROM organisations ORDER BY name COLLATE NOCASE"
@@ -4910,8 +5132,7 @@ def _declare(template, validate, **extra):
         organisation_names=_public_organisation_names(get_db()),
         # Same treatment as the organisations: « Personnes concernées » stays
         # free text (a declarant may name somebody with no fiche yet) but comes
-        # with a picker of the people it is safe to list — see
-        # _public_person_names, which is a whitelist, not the whole base.
+        # with a picker of everyone on file — see _public_person_names.
         person_names=_public_person_names(get_db()),
         directions=MAIL_DIRECTIONS, today=date.today().isoformat(),
         captcha_question=_new_captcha(), **extra,
