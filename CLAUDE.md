@@ -92,6 +92,17 @@ Interventions · Contenus · Modération · Utilisateurices.
   statut, donc une décision humaine n'est jamais défaite par la synchro de nuit.
   Compteur dans l'onglet. **C'est là qu'il faut chercher un échange qui
   n'apparaît pas.**
+- **`/echanges/deposer`** : dépôt manuel d'un `.eml` (glisser-déposer, ou
+  sélecteur de fichiers sans JavaScript). Passe par
+  `import_member_mails.handle_one_message()`, donc par **le même classifieur**
+  que la capture automatique — une seconde implémentation divergerait au premier
+  correctif. Deux différences voulues : publication directe (sans modération, la
+  personne qui dépose son échange sait ce qu'elle dépose) et **périmètre non
+  appliqué** (`enforce_scope=False`) — un dépôt volontaire est précisément le
+  consentement qui manque à la capture, donc le journaliste sur gmail y entre.
+  `app.py` importe `utils/` **tardivement** et tolère son absence : le
+  Dockerfile ne copie pas ce répertoire, un import au chargement ferait planter
+  toute l'application sur une image fraîche.
 - **Filtres** : l'origine (membre / campagne citoyenne) **et** le type
   d'interlocuteur (`contact_type`) sont deux questions distinctes — avant la
   fusion presse, un échange avec un journaliste s'affichait « Membre » sans plus.

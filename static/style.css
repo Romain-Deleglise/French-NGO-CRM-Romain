@@ -1107,3 +1107,40 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
   .inline-form select { max-width: none; flex: 1 1 100%; min-width: 0; }
   .inline-form .btn { flex: 1 1 auto; }
 }
+
+
+/* ---------- Dépôt de courriels (/echanges/deposer) ---------- */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .3rem;
+  padding: 2rem 1rem;
+  margin-bottom: 1rem;
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone:focus-within { border-color: var(--brand); }
+/* Pendant le survol d'un fichier : la cible doit être évidente, sinon on lâche
+   à côté et le navigateur ouvre le fichier au lieu de le déposer. */
+.dropzone.is-over { border-color: var(--brand); background: var(--brand-soft); }
+.dropzone-icon { font-size: 1.8rem; }
+.dropzone-title { font-weight: 600; }
+/* L'input reste visible pour qui n'a pas JavaScript : c'est alors le seul
+   moyen de déposer. Dès que deposit.js tourne, le <label> ouvre le sélecteur
+   et l'input n'a plus lieu d'encombrer. */
+.dropzone input[type="file"] { margin-top: .6rem; font: inherit; }
+.dropzone.has-js input[type="file"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.dropzone-files { font-size: .9rem; color: var(--brand-ink); font-weight: 600; }
+.deposit-help { margin: 1.5rem 0; }
+.deposit-help summary { cursor: pointer; font-weight: 600; }
+.deposit-results-title { font-size: 1.05rem; margin: 1.5rem 0 .6rem; }

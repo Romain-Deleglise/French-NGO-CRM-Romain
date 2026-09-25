@@ -120,6 +120,25 @@ Sa fiche se crée à la main, et l'adresse est apprise ensuite.
 
 L'import compte ce qu'il écarte (`outside the queue's scope`) sans le stocker.
 
+## 5 ter. Déposer un courriel à la main
+
+`/echanges/deposer` : on glisse un ou plusieurs `.eml`, ils sont traités par le
+même classifieur que l'import automatique
+(`import_member_mails.handle_one_message`). Deux différences, voulues :
+
+- **publication directe**, sans modération : qui dépose son propre échange sait
+  ce qu'il dépose, et la modération n'ajouterait qu'une friction ;
+- **le périmètre restrictif ne s'applique pas**. Un dépôt volontaire vaut
+  consentement, là où la capture automatique reçoit sans avoir demandé. C'est
+  ainsi qu'un journaliste écrivant depuis son gmail entre dans le CRM.
+
+Un `Message-ID` déjà connu est ignoré : on peut redéposer un fil entier sans
+créer de doublon. Un fichier illisible n'emporte pas les autres du même dépôt.
+
+**Dépendance à connaître** : le Dockerfile ne copie pas `utils/`, injecté à
+l'exécution par `docker cp`. `app.py` l'importe donc tardivement et affiche un
+message explicite s'il manque, au lieu de refuser de démarrer.
+
 ## 6. Fonctionnement en continu (automatique)
 
 Un **timer systemd** se déclenche **toutes les 10 minutes** et, dans le

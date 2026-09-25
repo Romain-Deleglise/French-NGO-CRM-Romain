@@ -435,7 +435,7 @@ def classify(msg, db, email_index, name_patterns=None):
     return None, [], None, None, False
 
 
-def queue_unknown_counterparts(db, msg, now):
+def queue_unknown_counterparts(db, msg, now, enforce_scope=True):
     """Queue the outside address of a member mail we failed to match.
 
     Only mails with a member on exactly one side are of interest: those are
@@ -447,7 +447,7 @@ def queue_unknown_counterparts(db, msg, now):
     # to a list, so there is no person behind the address to look up. Cheapest
     # and broadest test, hence first.
     if is_bulk(msg):
-        return 0
+        return 0, 0
 
     from_pairs = addr_pairs(msg, "From")
     to_pairs = addr_pairs(msg, "To", "Cc")
@@ -459,7 +459,7 @@ def queue_unknown_counterparts(db, msg, now):
     elif to_member and not from_member:
         candidates = from_pairs    # someone unknown wrote to a member
     else:
-        return 0
+        return 0, 0
 
     queued = out_of_scope = 0
     for display, address in candidates:
@@ -481,7 +481,12 @@ def queue_unknown_counterparts(db, msg, now):
         # l'association, y compris les mails personnels des membres. Sans ce
         # test, le médecin d'un membre finissait dans une page consultable par
         # toute l'équipe. Voir maildomains.in_scope().
-        if not maildomains.in_scope(address):
+        # `enforce_scope=False` pour un courriel déposé à la main : quelqu'un
+        # a délibérément choisi de le confier au CRM, ce qui est précisément le
+        # consentement qui manque à la capture automatique. La restriction
+        # protège des mails qu'on reçoit sans les avoir demandés ; elle n'a pas
+        # de sens sur un dépôt volontaire.
+        if enforce_scope and not maildomains.in_scope(address):
             out_of_scope += 1
             continue
         if enqueue(db, address, display, now):
@@ -506,15 +511,15 @@ def record(db, msg, direction, matches, member, learn, low_confidence,
     if body:
         summary = body
     elif direction == "sent":
-        summary = f"Mail de {member_name} à {elu_names} — « {subject} »"
+        summary = f"Mail de {member_name} à {elu_names} : « {subject} »"
     else:
-        summary = f"Mail de {elu_names} à {member_name} — « {subject} »"
+        summary = f"Mail de {elu_names} à {member_name} : « {subject} »"
 
     # A low-confidence (name-pattern) match is flagged in "personnes concernées"
     # for the moderator, never mixed into the body.
     proposed = elu_names
     if low_confidence:
-        proposed += " — à confirmer : élu·e identifié·e par nom"
+        proposed += " (à confirmer : personne identifiée par son nom)"
 
     # Low-confidence (name-pattern) matches always go to moderation, even in
     # auto-publish mode, so a human confirms the élu·e before it is published.
@@ -585,6 +590,52 @@ def connect_imap():
     conn = imaplib.IMAP4_SSL(host, port)
     conn.login(user, password)
     return conn
+
+
+def handle_one_message(db, msg, auto_publish=True, enforce_scope=False):
+    """Traiter un courriel isolé, exactement comme l'import le ferait.
+
+    Écrit pour le dépôt manuel (`/echanges/deposer`), qui doit passer par le
+    même classifieur que la capture automatique : une seconde implémentation
+    divergerait au premier correctif. Retourne un état lisible par l'interface :
+
+        'imported'    rattaché à une personne et à un membre
+        'duplicate'   ce Message-ID est déjà en base
+        'queued'      personne reconnue, adresse mise en file « à rattacher »
+        'unmatched'   ni l'un ni l'autre (aucun membre PauseIA dans le courriel)
+
+    L'appelant est responsable du commit : un dépôt de dix fichiers est une
+    seule transaction, ou rien.
+    """
+    # `imported_mails` (le dédoublonnage par Message-ID) vient des scripts, pas
+    # de init_db() : sans elle, un dépôt échoue sur une base que seul l'app a
+    # créée. Les trois sont idempotentes.
+    ensure_state_table(db)
+    ensure_member_tables(db)
+    ensure_civicrm_tables(db)
+    maildomains.refresh(db)
+    maildomains.refresh_scope(db)
+
+    message_id = (msg.get("Message-ID") or "").strip()
+    if message_id and db.execute(
+            "SELECT 1 FROM imported_mails WHERE message_id = ?",
+            (message_id,)).fetchone() is not None:
+        return "duplicate", decoded(msg.get("Subject")) or "(sans objet)"
+
+    subject = decoded(msg.get("Subject")) or "(sans objet)"
+    email_index = load_email_index_with_aliases(db)
+    name_patterns = build_name_pattern_index(db)
+    direction, matches, member, learn, low_conf = classify(
+        msg, db, email_index, name_patterns)
+    if direction:
+        record(db, msg, direction, matches, member, learn, low_conf,
+               dry_run=False, auto_publish=auto_publish)
+        return "imported", subject
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    queued, _ignored = queue_unknown_counterparts(
+        db, msg, now, enforce_scope=enforce_scope)
+    return ("queued" if queued else "unmatched"), subject
 
 
 def main():

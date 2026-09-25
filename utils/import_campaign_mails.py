@@ -99,13 +99,43 @@ def log(msg):
 
 
 def decoded(value):
-    """RFC 2047-decode a header value into a plain str (never raises)."""
+    """RFC 2047-decode a header value into a plain str (never raises).
+
+    Trois formes arrivent réellement, et seule la première est conforme :
+
+    - `=?UTF-8?Q?S=C3=A9curit=C3=A9?=`, l'encodage MIME normal ;
+    - de l'UTF-8 **brut** dans l'en-tête. `email` le rend alors sous forme
+      d'objet `Header` dont le jeu de caractères est `unknown-8bit`, et le
+      convertir en texte remplace chaque octet par « ? » : un objet devenait
+      « s??curit?? » en base, définitivement. On décode donc les morceaux
+      nous-mêmes, en essayant l'UTF-8 puis les encodages Windows historiques ;
+    - un jeu de caractères annoncé mais faux, traité par le même repli.
+    """
     if not value:
         return ""
     try:
-        return str(make_header(decode_header(value)))
+        parts = decode_header(value)
     except Exception:
-        return value
+        return str(value)
+
+    out = []
+    for chunk, charset in parts:
+        if isinstance(chunk, str):
+            out.append(chunk)
+            continue
+        # `unknown-8bit` n'est pas un encodage : c'est l'aveu que l'expéditeur
+        # n'en a déclaré aucun. À nous de deviner, dans l'ordre du plus probable.
+        candidates = [charset] if charset and charset != "unknown-8bit" else []
+        candidates += ["utf-8", "cp1252", "latin-1"]
+        for candidate in candidates:
+            try:
+                out.append(chunk.decode(candidate))
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        else:
+            out.append(chunk.decode("utf-8", "replace"))
+    return "".join(out)
 
 
 def ensure_state_table(db):

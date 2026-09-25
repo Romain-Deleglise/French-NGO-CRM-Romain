@@ -21,12 +21,14 @@ Run with:  uv run flask --app app run --debug
 
 import calendar as pycalendar
 import contextlib
+import email
 import fcntl
 import math
 import os
 import random
 import re
 import sqlite3
+import sys
 import time
 import unicodedata
 import uuid
@@ -5205,6 +5207,112 @@ def conversation(key=None):
 # --------------------------------------------------------------------------- #
 
 UNLINKED_STATUSES = ("pending", "absent")
+
+
+# --------------------------------------------------------------------------- #
+# Déposer un courriel à la main
+# --------------------------------------------------------------------------- #
+
+def _member_importer():
+    """Le module d'import, ou None s'il n'est pas dans le conteneur.
+
+    `utils/` n'est PAS copié par le Dockerfile : il est injecté à l'exécution
+    par `docker cp`. Une page qui l'importe au chargement du module ferait donc
+    planter l'application entière sur une image fraîche. L'import est donc tardif
+    et son échec est une information affichée à l'écran, pas une erreur 500.
+    """
+    utils = str(BASE_DIR / "utils")
+    if utils not in sys.path:
+        sys.path.insert(0, utils)
+    try:
+        import import_member_mails                  # noqa: PLC0415
+        return import_member_mails
+    except ImportError:
+        return None
+
+
+# Un courriel avec ses pièces jointes tient largement dedans, et ça borne ce
+# qu'un dépôt peut coûter en mémoire. MAX_CONTENT_LENGTH borne déjà la requête.
+MAX_EML_BYTES = 8 * 1024 * 1024
+ALLOWED_EML_SUFFIXES = (".eml", ".msg", ".txt")
+
+
+@app.route("/echanges/deposer", methods=["GET", "POST"])
+@login_required
+def deposit():
+    """Déposer un ou plusieurs fichiers .eml, traités comme l'import automatique.
+
+    La capture automatique ne retient que ce que l'association a une raison de
+    suivre (voir maildomains.in_scope), ce qui laisse dehors un cas courant : le
+    journaliste qui écrit depuis son gmail. Ici, quelqu'un choisit délibérément
+    de confier un échange au CRM — c'est le consentement qui manque à la
+    capture — donc le périmètre restrictif ne s'applique pas.
+
+    Publication directe, sans passer par la modération : la personne qui dépose
+    son propre échange sait ce qu'elle dépose.
+    """
+    importer = _member_importer()
+    if request.method == "GET":
+        return render_template("deposit.html", importer=bool(importer))
+
+    if importer is None:
+        flash("Le module d'import n'est pas présent dans le conteneur "
+              "(utils/ n'est pas copié par l'image). Dépôt impossible.", "error")
+        return redirect(url_for("deposit"))
+
+    files = [f for f in request.files.getlist("courriels") if f and f.filename]
+    if not files:
+        flash("Aucun fichier reçu.", "error")
+        return redirect(url_for("deposit"))
+
+    db = get_db()
+    results, counts = [], {"imported": 0, "queued": 0,
+                           "duplicate": 0, "unmatched": 0, "rejected": 0}
+    for storage in files:
+        name = storage.filename
+        if not name.lower().endswith(ALLOWED_EML_SUFFIXES):
+            results.append((name, "rejected", "ce n'est pas un fichier .eml"))
+            counts["rejected"] += 1
+            continue
+        raw = storage.read(MAX_EML_BYTES + 1)
+        if len(raw) > MAX_EML_BYTES:
+            results.append((name, "rejected", "fichier trop volumineux"))
+            counts["rejected"] += 1
+            continue
+        try:
+            msg = email.message_from_bytes(raw)
+            state, subject = importer.handle_one_message(db, msg)
+        except Exception as exc:                     # noqa: BLE001
+            # Un .eml mal formé ne doit pas emporter les autres fichiers du même
+            # dépôt, ni rendre une erreur 500 à quelqu'un qui a juste glissé le
+            # mauvais fichier.
+            app.logger.exception("dépôt de courriel : %s", name)
+            results.append((name, "rejected", f"illisible ({type(exc).__name__})"))
+            counts["rejected"] += 1
+            continue
+        results.append((name, state, subject))
+        counts[state] += 1
+
+    db.commit()
+    session["deposit_results"] = results
+    flash(_deposit_summary(counts), "success" if counts["imported"] else "error")
+    return redirect(url_for("deposit"))
+
+
+def _deposit_summary(counts):
+    parts = []
+    if counts["imported"]:
+        parts.append(f"{counts['imported']} courriel(s) enregistré(s)")
+    if counts["queued"]:
+        parts.append(f"{counts['queued']} adresse(s) mise(s) en file « à "
+                     f"rattacher »")
+    if counts["duplicate"]:
+        parts.append(f"{counts['duplicate']} déjà connu(s)")
+    if counts["unmatched"]:
+        parts.append(f"{counts['unmatched']} sans membre PauseIA identifiable")
+    if counts["rejected"]:
+        parts.append(f"{counts['rejected']} refusé(s)")
+    return ", ".join(parts) + "." if parts else "Rien à traiter."
 
 
 @app.route("/echanges/a-rattacher")
