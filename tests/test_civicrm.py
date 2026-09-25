@@ -600,6 +600,11 @@ class ApplyNamesTests(unittest.TestCase):
                                         "emmanuel.pall@francetv.fr"))
         # A convention is a habit, not a rule: the fiche has to say so.
         self.assertIn("à confirmer", notes)
+        # And it names the DOMAIN the convention came from, not the label most
+        # of that domain's addresses happen to carry — this journalist sits
+        # under another regional newsroom entirely.
+        self.assertIn("francetv.fr", notes)
+        self.assertNotIn("FRANCE 3 PARIS", notes)
 
     def test_a_freelance_whose_own_address_is_elsewhere_still_counts(self):
         cl.enqueue(self.db, "pierre.debaudouin@francetv.fr", "", NOW)

@@ -617,8 +617,12 @@ def cmd_apply_names(db, args):
             untouched += 1
             continue
         row["email"] = address
+        # The DOMAIN is what the convention was learned from, so it is what the
+        # note names. Quoting convention['media'] read wrong: it is the label
+        # most of the domain's addresses carry ("FRANCE 3 PARIS ILE-DE-FRANCE"),
+        # while this journalist's own fiche says FRANCE 3 HAUTS DE FRANCE.
         row["notes"] += (
-            f"\nAdresse reconnue par la convention de {convention['media']} "
+            f"\nAdresse reconnue par la convention de {domain} "
             f"(« {convention['template']} ») — à confirmer.")
         if args.commit:
             person_id, _action = create_or_attach(
@@ -627,8 +631,8 @@ def cmd_apply_names(db, args):
                 "UPDATE civicrm_pending SET status = 'resolved', resolved_at = ?, "
                 "person_id = ? WHERE email = ?", (now, person_id, address))
         resolved += 1
-        log(f"  ? {row['name']} — {convention['media']} <{address}> "
-            f"[motif {convention['template']}, à confirmer]")
+        log(f"  ? {row['name']} — {row.get('media_name') or domain} <{address}> "
+            f"[motif {convention['template']} sur {domain}, à confirmer]")
 
     if args.commit:
         db.commit()
