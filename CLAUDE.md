@@ -130,7 +130,12 @@ Interventions · Contenus · Modération · Utilisateurices.
 
 ### b) Intégration des mails (récurrent, timers systemd)
 - **Citoyens → élu·es** : `import_campaign_mails.py` (BCC campagne). Voir
-  `AUTOMATISATION_MAILS_CAMPAGNE.md`. RGPD : identité citoyen jamais stockée.
+  `AUTOMATISATION_MAILS_CAMPAGNE.md`. RGPD : identité citoyen jamais stockée —
+  et c'est ce qui explique la seule asymétrie restante avec le pipeline des
+  membres : `queue_unknown_recipients()` ne met en file que les **destinataires**
+  inconnus, jamais l'expéditeur, qui est le citoyen. Pour le reste les deux
+  pipelines sont alignés : même index d'adresses (`person_emails` compris), même
+  file `civicrm_pending`, même périmètre `maildomains.in_scope`.
 - **Membres ↔ élu·es** : `import_member_mails.py` (règle Gmail invisible →
   boîte d'audit IMAP). Matching robuste (adresse/alias/corps/fil/motif de nom),
   membres auto-créés. Voir `AUTOMATISATION_MAILS_MEMBRES.md`.
@@ -182,8 +187,14 @@ ne dit rien du propriétaire d'une *nouvelle* adresse gmail. Les trois domaines
 parlementaires restent un plancher.
 
 ### e) Planification (`utils/deploy/*.timer`, UTC)
-- `sync-officials` (lun. 05:30, les 4 chambres + `in_office`) — remplace l'ancien
-  `sync-eurodeputes` (désactivé).
+- `sync-officials` (lun. 05:30, les 4 chambres + `in_office`) : remplace l'ancien
+  `sync-eurodeputes`, dont les unités ont été retirées du dépôt (les laisser
+  désactivées revenait à proposer l'installation de deux synchros concurrentes
+  sur les mêmes fiches). Trace son exécution dans `import_runs`.
+- `backup-db` (03:17, avant toutes les synchros) : `backup_db.py` dans le
+  conteneur, **puis copie sur l'hôte** et, si `RSYNC_DEST` est renseigné, hors
+  de la machine. Une sauvegarde restée dans le conteneur ne protège de rien.
+  Rotation : 2 copies dans le conteneur, 30 sur l'hôte.
 - `import-campaign-mails` (06:00, sync emails + import citoyens).
 - `import-member-mails` (**toutes les 10 min**, `OnUnitActiveSec=10min`) — la
   capture Workspace est instantanée, seul cet import faisait attendre ; sans

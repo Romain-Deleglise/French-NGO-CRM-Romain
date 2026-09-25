@@ -71,6 +71,9 @@ from email.utils import getaddresses, parsedate_to_datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import maildomains  # noqa: E402
+# La file d'attente est définie une seule fois, dans le pont CiviCRM :
+# deux définitions du même schéma finiraient par diverger.
+from civicrm_lookup import ensure_civicrm_tables, enqueue  # noqa: E402
 import importruns  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -180,12 +183,31 @@ def set_last_uid(db, mailbox, uid):
 
 
 def load_email_index(db):
-    """persons.email (lower-cased) -> list of (id, name). Skips blank emails."""
+    """Adresse (en minuscules) -> [(id, nom)], adresses secondaires comprises.
+
+    L'index ne lisait que `persons.email`. Or une personne écrit et reçoit
+    depuis plusieurs adresses, et `person_emails` est précisément la table où
+    l'import des courriels de membres et le pont CiviCRM enregistrent les
+    autres. Le pipeline citoyen les ignorait : un mail adressé à l'adresse de
+    cabinet d'un·e élu·e, alors que sa fiche porte l'adresse parlementaire,
+    n'était rattaché à personne. Les deux pipelines lisent désormais la même
+    chose.
+    """
     index = {}
     for pid, name, mail in db.execute(
         "SELECT id, name, email FROM persons WHERE email IS NOT NULL AND email != ''"
     ):
         index.setdefault(mail.strip().lower(), []).append((pid, name))
+    try:
+        rows = db.execute(
+            "SELECT pe.email, p.id, p.name FROM person_emails pe "
+            "JOIN persons p ON p.id = pe.person_id")
+    except sqlite3.Error:
+        return index          # table absente : base neuve, rien à ajouter
+    for mail, pid, name in rows:
+        entries = index.setdefault((mail or "").strip().lower(), [])
+        if not any(existing[0] == pid for existing in entries):
+            entries.append((pid, name))
     return index
 
 
@@ -372,12 +394,48 @@ def handle_message(db, msg, uid, mailbox, email_index, dry_run, auto_publish,
     if matches:
         stage_message(db, msg, uid, mailbox, matches, dry_run, auto_publish)
         return "staged"
+    queued = 0
+    if not dry_run:
+        queued = queue_unknown_recipients(db, msg)
     if verbose:
         addrs = sorted({a.lower() for _d, a in getaddresses(
             sum((msg.get_all(h, []) for h in RECIPIENT_HEADERS), [])) if a})
         log(f"  [no match] {decoded(msg.get('Subject'))!r} "
             f"-> {', '.join(addrs) or '(no recipient header)'}")
-    return "unmatched"
+    return "queued" if queued else "unmatched"
+
+
+def queue_unknown_recipients(db, msg):
+    """Mettre en file les DESTINATAIRES qu'aucune fiche ne reconnaît.
+
+    **Seulement les destinataires, jamais l'expéditeur** : dans ce pipeline,
+    l'expéditeur est le citoyen, et ce pipeline ne stocke jamais son identité.
+    C'est la règle RGPD qui le fonde depuis l'origine (on enregistre qu'un·e
+    élu·e a reçu un courriel et quand, pas qui l'a écrit), et elle est plus
+    importante que le confort d'une file mieux remplie. D'où une fonction
+    distincte de celle de l'import des membres, où les deux côtés sont
+    légitimes : la symétrie serait ici une fuite.
+
+    Le périmètre habituel s'applique (`maildomains.in_scope`) : une adresse doit
+    relever d'un domaine que l'association a une raison de suivre.
+    """
+    try:
+        ensure_civicrm_tables(db)
+    except sqlite3.Error:
+        return 0
+    maildomains.refresh_scope(db)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    queued = 0
+    pairs = []
+    for header in RECIPIENT_HEADERS:
+        pairs.extend(getaddresses(msg.get_all(header, [])))
+    for display, address in pairs:
+        address = (address or "").strip().lower()
+        if not address or not maildomains.in_scope(address):
+            continue
+        if enqueue(db, address, display, now):
+            queued += 1
+    return queued
 
 
 def iter_leaf_messages(msg):
@@ -409,19 +467,21 @@ def run_mbox(db, path, email_index, dry_run, auto_publish, verbose):
     box = mailbox_mod.mbox(path)
     log(f"mbox {path!r}: {len(box)} mbox entrie(s) to inspect "
         "(digests are exploded into individual messages).")
-    imported = skipped_dup = unmatched = 0
+    imported = skipped_dup = unmatched = queued = 0
     for key in box.keys():
         for msg in iter_leaf_messages(box[key]):
             result = handle_message(db, msg, None, f"mbox:{os.path.basename(path)}",
                                     email_index, dry_run, auto_publish, verbose)
             imported += result == "staged"
             skipped_dup += result == "dup"
+            queued += result == "queued"
             unmatched += result == "unmatched"
     if not dry_run:
         db.commit()
     verb = "published" if auto_publish else "staged"
     log(f"Done. Mails {verb}: {imported} | already-imported skipped: "
-        f"{skipped_dup} | no match: {unmatched}.")
+        f"{skipped_dup} | queued for identification: {queued} | "
+        f"no match: {unmatched}.")
 
 
 _MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -543,7 +603,7 @@ def run_eml_dir(db, path, email_index, dry_run, auto_publish, verbose, match_bod
     files = sorted(f for f in os.listdir(path) if f.lower().endswith(".eml"))
     log(f"eml dir {path!r}: {len(files)} .eml file(s) to inspect"
         + (" (matching body addresses)" if match_body else "") + ".")
-    imported = skipped_dup = unmatched = 0
+    imported = skipped_dup = unmatched = queued = 0
     for name in files:
         with open(os.path.join(path, name), "rb") as fh:
             top = email.message_from_binary_file(fh)
@@ -552,12 +612,14 @@ def run_eml_dir(db, path, email_index, dry_run, auto_publish, verbose, match_bod
                                     dry_run, auto_publish, verbose, match_body)
             imported += result == "staged"
             skipped_dup += result == "dup"
+            queued += result == "queued"
             unmatched += result == "unmatched"
     if not dry_run:
         db.commit()
     verb = "published" if auto_publish else "staged"
     log(f"Done. Mails {verb}: {imported} | already-imported skipped: "
-        f"{skipped_dup} | no match: {unmatched}.")
+        f"{skipped_dup} | queued for identification: {queued} | "
+        f"no match: {unmatched}.")
 
 
 def main():
@@ -634,7 +696,7 @@ def main():
         log(f"Mailbox {mailbox!r}: {len(uids)} message(s) to inspect "
             f"({'backfill' if args.backfill else f'UID > {last_uid}'}).")
 
-        imported, skipped_dup, unmatched, max_uid = 0, 0, 0, last_uid
+        imported, skipped_dup, unmatched, queued, max_uid = 0, 0, 0, 0, last_uid
         for uid in uids:
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
             if status != "OK" or not data or data[0] is None:
@@ -644,6 +706,7 @@ def main():
                                     args.dry_run, auto_publish, args.verbose)
             imported += result == "staged"
             skipped_dup += result == "dup"
+            queued += result == "queued"
             unmatched += result == "unmatched"
             max_uid = max(max_uid, uid)
 
@@ -654,9 +717,11 @@ def main():
         verb = "published" if auto_publish else "staged"
         run.imported, run.inspected = imported, len(uids)
         run.detail = (f"{imported} courriel(s) intégré(s), {skipped_dup} déjà "
-                      f"connu(s), {unmatched} sans correspondance.")
+                      f"connu(s), {queued} destinataire(s) en file, "
+                      f"{unmatched} sans correspondance.")
         log(f"Done. Mails {verb}: {imported} | already-imported skipped: "
-            f"{skipped_dup} | no match: {unmatched} | last UID now: "
+            f"{skipped_dup} | queued for identification: {queued} | "
+            f"no match: {unmatched} | last UID now: "
             f"{max_uid if not args.dry_run else last_uid}.")
     except BaseException as exc:             # noqa: BLE001 — recorded, re-raised
         failure = exc

@@ -33,6 +33,10 @@ import sys
 import urllib.request
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import importruns  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 JSON_DIR = os.path.join(ROOT, "json")
@@ -185,6 +189,28 @@ def reconcile_in_office():
 
 
 def main():
+    # Une ligne dans `import_runs`, comme les imports de courriels : sans elle,
+    # une synchro qui échoue toutes les semaines reste parfaitement invisible —
+    # les fiches cessent simplement d'être à jour, sans que rien ne le dise.
+    db = sqlite3.connect(DB)
+    db.execute("PRAGMA busy_timeout = 30000")
+    tracker = importruns.track(db, "sync_officials")
+    run = tracker.__enter__()
+    try:
+        # Pas de `else:` ici — un `return` dans le `try` saute la clause `else`
+        # et la ligne de suivi resterait « en cours » à chaque succès.
+        resultat = _main(run)
+        tracker.__exit__(None, None, None)
+        return resultat
+    except BaseException as exc:                     # noqa: BLE001 — tracé puis relancé
+        run.detail = run.detail or f"{type(exc).__name__}: {exc}"
+        tracker.__exit__(type(exc), exc, None)
+        raise
+    finally:
+        db.close()
+
+
+def _main(run):
     os.makedirs(DATASET, exist_ok=True)  # every extract writes its JSON here
     chambers = [
         ("Assemblée nationale", sync_deputes),
@@ -206,12 +232,14 @@ def main():
         # Skip reconciliation: without every list the union is incomplete and
         # would retire people who are actually still in office.
         log("\nin_office reconciliation skipped (a chamber failed).")
+        run.detail = "Chambres en échec : " + ", ".join(failures)
         raise SystemExit(
             "Chambers that failed (left untouched, others applied): "
             + ", ".join(failures)
         )
 
     reconcile_in_office()
+    run.detail = f"{len(chambers)} chambres rafraîchies."
     log("\nAll chambers refreshed.")
 
 

@@ -79,6 +79,32 @@ depuis la source officielle, ce qui a débloqué leur matching.
 Minimisation : on ne stocke que **l'élu·e, la date et l'objet** du mail.
 **L'identité du citoyen n'est jamais enregistrée** (l'en-tête `From` n'est pas lu).
 
+Cette règle commande la mise en file décrite ci-dessous : `queue_unknown_
+recipients()` ne lit **que** les en-têtes de destinataires. Le pipeline des
+membres, lui, met en file les deux côtés — c'est légitime là-bas, où les deux
+correspondants sont identifiés. Ici, la même symétrie serait une fuite : elle
+enregistrerait le citoyen. D'où deux fonctions distinctes plutôt qu'une seule
+partagée, et un test qui vérifie explicitement que l'expéditeur n'entre jamais
+en file.
+
+## 7 bis. Destinataires inconnus : la file d'identification
+
+Une adresse de destinataire qu'aucune fiche ne reconnaît était **abandonnée en
+silence**. Elle entre désormais dans `civicrm_pending`, la même file que
+l'import des membres alimente, et apparaît dans l'interface sur
+`/echanges/a-rattacher`.
+
+Le périmètre habituel s'applique (`maildomains.in_scope`) : il faut un domaine
+que l'association a une raison de suivre — une rédaction connue, une institution
+publique, un domaine déjà porté par une fiche. C'est par là que les **élu·es
+locaux** entrent : `maire@mairie-nantes.fr` est retenue sans qu'aucune fiche ne
+la connaisse, là où `contact@plombier-92.fr` ne l'est pas.
+
+L'index des adresses lit par ailleurs `person_emails` (les adresses secondaires
+apprises par fil de discussion ou par CiviCRM). Un courriel adressé à l'adresse
+de cabinet d'un·e élu·e, alors que sa fiche porte l'adresse parlementaire, est
+désormais rattaché — ce que le pipeline des membres savait déjà faire.
+
 ## 8. Reprise de l'historique (déjà effectuée)
 
 L'historique du groupe n'était pas exportable proprement (pas de licence Vault,

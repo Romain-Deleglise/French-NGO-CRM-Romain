@@ -489,3 +489,22 @@
 </p>
 {% endif %}
 {% endmacro %}
+
+
+{# Pagination d'une liste. `args` porte les filtres de la page pour qu'ils
+   survivent au changement de page — sans quoi « page suivante » recommence à
+   zéro, ce qui est la façon la plus sûre de faire croire que la recherche ne
+   marche pas. #}
+{% macro pager(endpoint, page, has_next, args={}) %}
+{% if page > 1 or has_next %}
+<nav class="pager">
+  {% if page > 1 %}
+  <a class="btn btn-ghost" href="{{ url_for(endpoint, page=page - 1, **args) }}">← Précédents</a>
+  {% endif %}
+  <span class="muted">Page {{ page }}</span>
+  {% if has_next %}
+  <a class="btn btn-ghost" href="{{ url_for(endpoint, page=page + 1, **args) }}">Suivants →</a>
+  {% endif %}
+</nav>
+{% endif %}
+{% endmacro %}

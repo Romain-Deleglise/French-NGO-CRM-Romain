@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import pager %}
 {% import "_macros.html" as ui with context %}
 {% block title %}Organisations{% endblock %}
 {% block content %}
@@ -60,6 +61,7 @@
   </table>
 </div>
 <p class="muted count">{{ organisations|length }} organisation{{ '' if organisations|length == 1 else 's' }}</p>
+{{ pager('organisations', page, has_next, {"q": q, "org_type": org_type}) }}
 {% else %}
 <div class="empty">
   {% if q or org_type %}

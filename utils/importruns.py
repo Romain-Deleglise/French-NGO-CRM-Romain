@@ -24,8 +24,12 @@ Used as a context manager, so a crash is recorded rather than lost:
         ...
         run.imported = 12
 """
+import os
 import sqlite3
 from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DB = os.environ.get("IMAP_DB_PATH", os.path.join(ROOT, "meetings.db"))
 
 # How long the interface may call the data fresh. Read by app.py: the member
 # import runs every 10 minutes, so anything older than half an hour means three
@@ -119,6 +123,25 @@ class track:
         return False          # never swallow the original exception
 
 
+def record_external(db, script, status, detail=None, imported=0):
+    """Enregistrer une exécution qui s'est déroulée **hors** de ce processus.
+
+    `civicrm-sync.sh` tourne sur l'hôte et orchestre des scripts à travers
+    `docker exec` : aucun processus Python ne couvre son exécution de bout en
+    bout. Il appelle donc ceci en dernier, par un `docker exec` de plus, pour
+    que sa réussite ou son échec apparaisse dans `import_runs` comme le reste.
+    Sans quoi la seule synchro qu'on ne surveille pas serait la plus fragile —
+    elle dépend d'un second logiciel.
+    """
+    ensure_table(db)
+    now = _now()
+    db.execute(
+        "INSERT INTO import_runs (script, started_at, finished_at, status, "
+        "imported, detail) VALUES (?, ?, ?, ?, ?, ?)",
+        (script, now, now, status, imported, detail))
+    db.commit()
+
+
 def last_run(db, script=None):
     """The most recent run, as a dict, or None. Tolerant of a missing table."""
     sql = ("SELECT script, started_at, finished_at, status, imported, inspected, "
@@ -137,3 +160,35 @@ def last_run(db, script=None):
     keys = ("script", "started_at", "finished_at", "status", "imported",
             "inspected", "detail")
     return dict(zip(keys, row))
+
+
+def main():
+    """Point d'entrée en ligne de commande, pour les orchestrateurs hôtes.
+
+        python3 utils/importruns.py --record civicrm_sync --status ok \
+            --detail "168 médias, 3 fiches créées"
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--record", metavar="SCRIPT", required=True,
+                        help="nom du script dont on enregistre l'exécution")
+    parser.add_argument("--status", default="ok", choices=("ok", "error"))
+    parser.add_argument("--detail", default=None)
+    parser.add_argument("--imported", type=int, default=0)
+    parser.add_argument("--db", default=DEFAULT_DB)
+    args = parser.parse_args()
+
+    db = sqlite3.connect(args.db)
+    db.execute("PRAGMA busy_timeout = 30000")
+    try:
+        record_external(db, args.record, args.status, args.detail, args.imported)
+    finally:
+        db.close()
+    print(f"Exécution enregistrée : {args.record} ({args.status}).")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

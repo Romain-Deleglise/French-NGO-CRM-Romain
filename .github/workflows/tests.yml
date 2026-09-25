@@ -1,0 +1,48 @@
+# Les tests à chaque poussée, et sur chaque pull request.
+#
+# Jusqu'ici ils ne tournaient que si quelqu'un y pensait. C'est précisément ce
+# qui manquait le soir où quatre correctifs se sont enchaînés : chacun avait un
+# test, aucun ne l'aurait signalé à la place d'un humain.
+#
+# Volontairement minimal : l'application n'a aucune dépendance tierce pour ses
+# tests (bibliothèque standard uniquement), donc rien à installer et rien à
+# maintenir. Si une dépendance apparaît un jour, c'est ici qu'elle se déclarera.
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 est la version du conteneur ; 3.12 signale à l'avance ce qu'une
+        # mise à jour de l'image casserait.
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Dépendances de l'application
+        # `app.py` importe Flask et python-magic ; les scripts utils/ n'ont que
+        # la bibliothèque standard, par convention du projet.
+        run: |
+          python -m pip install --upgrade pip
+          pip install flask python-magic
+          sudo apt-get update && sudo apt-get install -y libmagic1
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+
+  # Les scripts shell de déploiement : une faute de frappe dans un `if` ne se
+  # découvrirait qu'à 03 h du matin, dans un timer.
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntaxe des scripts de déploiement
+        run: for f in utils/deploy/*.sh; do bash -n "$f" || exit 1; done
