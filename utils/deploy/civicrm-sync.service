@@ -1,0 +1,26 @@
+[Unit]
+Description=Resolve unknown press addresses against CiviCRM (read-only on CiviCRM)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# The script drives both containers from the host: `cv api4 …` inside
+# civicrm-web, the importers inside website-meeting-app. Every CiviCRM call is a
+# `.get` — nothing here can write to CiviCRM, which holds the donors and the
+# Stripe/HelloAsso contributions. It refreshes /app/utils itself, so no
+# ExecStartPre is needed here.
+ExecStart=/opt/scripts/civicrm-sync.sh --commit
+# A few dozen cv calls plus a --backfill sweep of the audit mailbox. Far under
+# this in practice, but a hung IMAP connection must not wedge the timer.
+TimeoutStartSec=30min
+# A CiviCRM upgrade that renames a custom field makes the contract test abort
+# with a non-zero status, and that is the point: it belongs in the journal, not
+# retried into silence. `journalctl -u civicrm-sync` shows what it could not map.
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

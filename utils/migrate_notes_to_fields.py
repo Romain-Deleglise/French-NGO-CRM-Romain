@@ -39,6 +39,9 @@ def parse_notes(notes):
 
 def main():
     db = sqlite3.connect(DB)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     cols = [r[1] for r in db.execute("PRAGMA table_info(persons)")]
     if "circonscription" not in cols:
         db.execute("ALTER TABLE persons ADD COLUMN circonscription TEXT")

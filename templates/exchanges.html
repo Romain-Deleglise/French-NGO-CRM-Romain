@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import import_banner %}
 {% block title %}Suivi des échanges{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -8,52 +9,106 @@
 <nav class="subtabs">
   <a class="subtab active" href="{{ url_for('exchanges') }}">Échanges</a>
   <a class="subtab" href="{{ url_for('members') }}">Membres</a>
+  <a class="subtab" href="{{ url_for('unlinked') }}">À rattacher{% if unlinked_count %} <span class="badge">{{ unlinked_count }}</span>{% endif %}</a>
+  <a class="subtab" href="{{ url_for('deposit') }}">Déposer</a>
   <a class="subtab" href="{{ url_for('mails') }}">Tous les courriels</a>
 </nav>
 
-<form class="search" method="get" action="{{ url_for('exchanges') }}">
-  <input type="search" name="q" value="{{ q }}"
-         placeholder="Rechercher (objet, élu·e, membre)…">
-  <select name="type">
-    <option value="">Tous les types</option>
-    <option value="membre"  {{ 'selected' if typ == 'membre' }}>Membres ↔ élu·es</option>
-    <option value="citoyen" {{ 'selected' if typ == 'citoyen' }}>Citoyens → élu·es</option>
-    <option value="autre"   {{ 'selected' if typ == 'autre' }}>Autres</option>
-  </select>
-  <button class="btn" type="submit">Filtrer</button>
-  {% if q or typ %}<a class="btn btn-ghost" href="{{ url_for('exchanges') }}">Effacer</a>{% endif %}
+{{ import_banner(import_state) }}
+
+<form class="search search-filters" method="get" action="{{ url_for('exchanges') }}">
+  <div class="search-line">
+    <input type="search" name="q" value="{{ q }}"
+           placeholder="Rechercher un objet, un interlocuteur, un membre…">
+    <button class="btn" type="submit">Filtrer</button>
+    {% if q or typ or kind or me %}
+    <a class="btn btn-ghost" href="{{ url_for('exchanges', me='') }}">Effacer</a>{% endif %}
+  </div>
+  {# Trois filtres sur une seconde ligne, avec leur étiquette : côte à côte
+     avec la recherche, ils écrasaient le champ au point d'en tronquer le texte
+     d'aide, et « Tout le monde » ne disait pas de quoi il parlait. #}
+  <div class="search-line search-line-filters">
+    <label>Origine
+      <select name="type">
+        <option value="">Toutes</option>
+        <option value="membre"  {{ 'selected' if typ == 'membre' }}>Échange d'un membre</option>
+        <option value="citoyen" {{ 'selected' if typ == 'citoyen' }}>Campagne citoyenne</option>
+        <option value="autre"   {{ 'selected' if typ == 'autre' }}>Autre</option>
+      </select>
+    </label>
+    <label>Interlocuteur
+      <select name="kind">
+        <option value="">Tous</option>
+        {% for t in contact_types %}
+        <option value="{{ t }}" {{ 'selected' if kind == t }}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Je suis
+      <select name="me">
+        <option value="">Tout le monde</option>
+        {% for m in members_list %}
+        <option value="{{ m['id'] }}" {{ 'selected' if me == m['id']|string }}>{{ m['name'] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
 </form>
+
+{% if me_name %}
+<p class="hint">Vous ne voyez que les échanges de <strong>{{ me_name }}</strong>.
+  Ce choix est mémorisé sur ce navigateur. Il ne masque rien à personne :
+  l'application n'a qu'un seul mot de passe, partagé.</p>
+{% endif %}
 
 {% if conversations %}
 <div class="table-wrap">
   <table class="meetings">
     <thead>
-      <tr><th>Date</th><th>Type</th><th>Interlocuteurs</th><th>Objet</th><th>Doc</th></tr>
+      <tr><th>Date</th><th class="col-secondary">Origine</th><th>Interlocuteur</th>
+        <th class="col-secondary">Membre</th><th>Objet</th>
+        <th class="col-secondary">Doc</th></tr>
     </thead>
     <tbody>
       {% for c in conversations %}
       <tr onclick="window.location='{{ url_for('conversation', key=c['key']) }}'">
         <td class="nowrap">{{ c['last_date'] | fr_date }}</td>
-        <td class="nowrap">
+        <td class="nowrap col-secondary">
           {% if c['type'] == 'membre' %}<span class="tag tag-member">👥 Membre</span>
           {% elif c['type'] == 'citoyen' %}<span class="tag tag-citizen">Citoyen</span>
-          {% else %}<span class="muted">—</span>{% endif %}
+          {% else %}{% endif %}
         </td>
-        <td class="nowrap">
+        <td>
           {{ c['elus']|join(', ') }}
-          {% if c['members'] %}<span class="muted">· {{ c['members']|join(', ') }}</span>{% endif %}
+          {% if c['kind'] and c['kind'] != 'plusieurs' %}
+          <span class="muted">({{ c['kind'] }})</span>
+          {% endif %}
+          {# Sur téléphone la colonne « Membre » disparaît : le nom revient donc
+             ici, pour ne pas perdre l'information. #}
+          {% if c['members'] %}
+          <span class="muted only-narrow">· {{ c['members']|join(', ') }}</span>
+          {% endif %}
+        </td>
+        <td class="col-secondary">
+          {% if c['members'] %}<span class="muted">{{ c['members']|join(', ') }}</span>
+          {% else %}{% endif %}
         </td>
         <td class="summary-cell">
-          {{ c['subject'] }}
+          <span class="subject">{{ c['subject'] }}</span>
           {% if c['count'] > 1 %}<span class="thread-count">{{ c['count'] }} messages</span>{% endif %}
         </td>
-        <td class="nowrap">{% if c['has_doc'] %}📎{% else %}—{% endif %}</td>
+        <td class="nowrap col-secondary">{% if c['has_doc'] %}📎{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-<p class="muted count">{{ conversations|length }} conversation{{ '' if conversations|length == 1 else 's' }}</p>
+<p class="muted count">{{ conversations|length }} conversation{{ '' if conversations|length == 1 else 's' }}
+{% if truncated %}
+  · lues sur les {{ window }} courriels les plus récents
+  <a href="{{ url_for('exchanges', q=q, type=typ, kind=kind, me=me, fenetre=next_window) }}">Élargir à {{ next_window }}</a>
+{% endif %}
+</p>
 {% else %}
 <div class="empty"><p>Aucun échange ne correspond à ces critères.</p></div>
 {% endif %}

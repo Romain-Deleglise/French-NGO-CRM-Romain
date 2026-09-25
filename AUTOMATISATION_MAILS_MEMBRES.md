@@ -32,7 +32,7 @@ Membre @pauseia.fr  ⇄  élu·e (mail entrant OU sortant)
         │  règle de contenu Gmail (Cci invisible, périmètre @pauseia.fr)
         ▼
 suivi-membres@pauseia.fr (boîte d'audit lue en IMAP)
-        │  import_member_mails.py (timer 06:10)
+        │  import_member_mails.py (timer toutes les 10 min)
         ▼
 CRM : mails + mail_persons (élu·e) + mail_members (membre) + corps
 ```
@@ -93,9 +93,55 @@ sans alourdir le menu du haut. Les fiches membre et les fiches **Personnes**
 **vue boîte mail** : chaque message en carte (expéditeur → destinataires, objet,
 corps), anciens messages repliés, le dernier ouvert.
 
-## 6. Fonctionnement quotidien (automatique)
+## 5 bis. Ce qui entre dans la file « à rattacher », et ce qui n'y entre pas
 
-Un **timer systemd** se déclenche **chaque jour à 06:10 UTC** et, dans le
+La boîte d'audit reçoit **toute** la correspondance externe de l'association :
+la règle Workspace est une regex sur `@pauseia.fr`, sans distinction. Les mails
+personnels d'un membre y sont donc aussi.
+
+Mettre en file toute adresse non reconnue revenait à recopier ces tiers — le
+médecin, la banque, la famille — avec leur nom, dans une page que consulte
+toute l'équipe. La file n'admet donc une adresse que pour une **raison
+positive** (`maildomains.in_scope`) :
+
+| Entre en file | N'entre pas |
+|---|---|
+| Un domaine déjà porté par une fiche (`lefigaro.fr`) | Une messagerie grand public (`gmail.com`, `orange.fr`) |
+| Un domaine de média attesté par CiviCRM (`mail_conventions`, 788 domaines) | Une entreprise quelconque (`plombier-92.fr`) |
+| Une institution publique (`.gouv.fr`, `mairie-*`, `senat.fr`…) | Une adresse générique (`contact@`, `redaction@`) ou un robot |
+
+Le seuil est d'**une** fiche sur le domaine, pas deux comme pour
+`maildomains.collect()` : il ne s'agit pas de décider à qui appartient un
+domaine, seulement de savoir s'il nous concerne.
+
+**Contrepartie assumée** : un journaliste qui écrit depuis son gmail personnel
+n'est pas mis en file, parce que rien ne l'y distingue du médecin d'un membre.
+Sa fiche se crée à la main, et l'adresse est apprise ensuite.
+
+L'import compte ce qu'il écarte (`outside the queue's scope`) sans le stocker.
+
+## 5 ter. Déposer un courriel à la main
+
+`/echanges/deposer` : on glisse un ou plusieurs `.eml`, ils sont traités par le
+même classifieur que l'import automatique
+(`import_member_mails.handle_one_message`). Deux différences, voulues :
+
+- **publication directe**, sans modération : qui dépose son propre échange sait
+  ce qu'il dépose, et la modération n'ajouterait qu'une friction ;
+- **le périmètre restrictif ne s'applique pas**. Un dépôt volontaire vaut
+  consentement, là où la capture automatique reçoit sans avoir demandé. C'est
+  ainsi qu'un journaliste écrivant depuis son gmail entre dans le CRM.
+
+Un `Message-ID` déjà connu est ignoré : on peut redéposer un fil entier sans
+créer de doublon. Un fichier illisible n'emporte pas les autres du même dépôt.
+
+**Dépendance à connaître** : le Dockerfile ne copie pas `utils/`, injecté à
+l'exécution par `docker cp`. `app.py` l'importe donc tardivement et affiche un
+message explicite s'il manque, au lieu de refuser de démarrer.
+
+## 6. Fonctionnement en continu (automatique)
+
+Un **timer systemd** se déclenche **toutes les 10 minutes** et, dans le
 conteneur, lit la boîte d'audit (uniquement les UID IMAP plus récents que le
 dernier traité), classe, matche, et **publie** (mode auto-publish). Les cas de
 faible confiance (motif de nom) partent en **modération**.
@@ -155,7 +201,7 @@ Pour les 4 chambres :
 | **`utils/sync_officials.py`** | Orchestrateur des **4 chambres** (AN, Sénat, gouvernement, eurodéputés) : fetch + extract + insert, chambres isolées, + réconciliation `in_office`. |
 | **`utils/extract_eurodeputes.py` / `insert_eurodeputes.py`** | Récupère (cache anti-429) et upsert les eurodéputé·es ; appelés par `sync_officials.py`. |
 | **`app.py` + templates** | Sous-onglet **Membres** dans **Suivi des échanges**, vue **boîte mail** des conversations, badge **« Non élu·e actuellement »** (`persons.in_office`) ; tables `members`, `mail_members`, `mail_bodies`, `mail_thread`. |
-| **`utils/deploy/import-member-mails.{service,timer}`** | Timer quotidien 06:10 (mails de membres). |
+| **`utils/deploy/import-member-mails.{service,timer}`** | Timer toutes les 10 min (mails de membres). |
 | **`utils/deploy/sync-officials.{service,timer}`** | Timer hebdo lundi 05:30 (les 4 chambres + réconciliation `in_office`). |
 
 ## 9. Déploiement / exploitation
@@ -213,3 +259,132 @@ sont conservés (utiles au suivi). Les mails citoyens restent, eux, minimisés
 
 *Code : branche `claude/automate-member-mails-crm`, dossier `utils/`.
 Référence complète des options : `utils/README.md`.*
+
+
+---
+
+## Les domaines connus sont lus dans la base (septembre 2026)
+
+Le script portait trois domaines en dur :
+
+```python
+OFFICIAL_DOMAINS = ("senat.fr", "assemblee-nationale.fr", "europarl.europa.eu")
+```
+
+Depuis la fusion du CRM presse, les journalistes sont des `persons` comme les
+autres, mais répartis sur des centaines de domaines de médias que personne ne
+maintiendra à la main. La liste est donc **calculée à partir des adresses déjà
+présentes en base** (`utils/maildomains.py`) et s'élargit toute seule à mesure
+que les fiches arrivent.
+
+**La règle : un domaine partagé par au moins deux personnes connues appartient à
+une organisation.** Une seule adresse sur un domaine ne prouve rien.
+
+**L'exception qui compte : les domaines grand public ne sont jamais des
+organisations.** `gmail.com`, `orange.fr`, `free.fr`, `laposte.net`… Plusieurs
+journalistes utilisent une adresse perso, ce qui ne dit rien sur le propriétaire
+d'une *nouvelle* adresse gmail. Sur ces domaines, seule l'adresse complète
+identifie quelqu'un. La liste est dans `FREEMAIL_DOMAINS`.
+
+Les trois domaines parlementaires restent un **plancher** : ils sont connus même
+face à une base vide, donc une installation neuve se comporte exactement comme
+avant.
+
+### Ce que ça débloque
+
+Le rapprochement par **scan du corps** fonctionne maintenant pour la presse. Une
+réponse envoyée depuis une autre adresse de la rédaction (`desk@lefigaro.fr`),
+qui cite le message d'origine, est rattachée au bon journaliste — ce qui était
+impossible tant que seuls les trois domaines parlementaires comptaient.
+
+### La règle Google Workspace
+
+C'est la même liste qui doit alimenter la boîte d'audit :
+
+```bash
+docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule
+docker exec website-meeting-app python3 /app/utils/maildomains.py --google-rule --exclude-seed
+```
+
+**La règle réelle de PauseIA ne liste aucun domaine.** Vérifié dans la console
+le 24/09/2026 : une seule expression, `Location: Full headers` /
+`Matches regex: @pauseia\.fr`, en Inbound et Outbound, livrée à
+`suivi-membres@pauseia.fr`. Elle copie donc **toute** la correspondance externe
+de l'association, presse comprise, et ce depuis toujours.
+
+Conséquences, dans les deux sens :
+
+- **Rien à faire dans Workspace** pour suivre la presse. Ce document a
+  longtemps dit le contraire, et `--google-rule` existait pour ça ; l'option
+  reste utile seulement pour une installation dont la règle énumère des
+  domaines.
+- **La capture est large**, et l'équipe devrait le savoir : le mail personnel
+  d'un membre vers un ami journaliste est copié comme le reste, et le corps des
+  mails membres est stocké (`mail_bodies`). Si ce périmètre pose question, c'est
+  la règle Workspace qu'il faut restreindre — par exemple à `presse@pauseia.fr`
+  — pas le code d'ici.
+
+---
+
+## `init_db()` est désormais sérialisé entre workers (septembre 2026)
+
+Le déploiement de `44b4311` a planté au démarrage en boucle : `init_db()` tourne
+à l'import du module, donc **les quatre workers gunicorn l'exécutent en même
+temps**. Le `RENAME COLUMN details` d'un worker est passé pendant qu'un autre
+lançait `UPDATE … details`, et le second a vu une colonne qui n'existait plus.
+
+Un **verrou de fichier** (`flock` sur `meetings.db.migrate.lock`) sérialise
+maintenant les migrations. Un verrou de fichier et non une transaction SQLite,
+parce que `executescript()` valide toute transaction en cours avant de
+s'exécuter : un `BEGIN IMMEDIATE` autour de ce bloc serait simplement ignoré.
+`flock` est en outre tenu par le noyau, donc un worker qui meurt en pleine
+migration le relâche au lieu de bloquer le démarrage suivant.
+
+Les workers qui attendent derrière le verrou rejouent ensuite les migrations —
+toutes sont gardées (`IF NOT EXISTS`, test de `PRAGMA table_info`), donc ce sont
+des opérations vides à ce moment-là. **Ce qui compte est de sérialiser, pas de
+sauter.** Si le verrou ne peut pas être pris (répertoire en lecture seule), le
+démarrage continue : un processus unique est le cas normal en développement.
+
+Les tests (`tests/test_init_db_concurrency.py`) démarrent de **vrais processus**
+en parallèle sur une base neuve, comme gunicorn, et vérifient qu'un second
+processus attend bien que le premier ait fini.
+
+`CRM_DB_PATH` permet au passage de pointer la base ailleurs, comme les scripts
+`utils/` le font déjà avec `IMAP_DB_PATH`.
+
+
+---
+
+## Concurrence avec l'application (septembre 2026)
+
+Un `--backfill` sur une boîte de 2 079 messages est mort sur
+`sqlite3.OperationalError: database is locked`. Deux causes, corrigées
+ensemble :
+
+**Personne n'attendait.** Ni les connexions de l'app (`get_db`), ni les scripts
+`utils/` ne posaient de `busy_timeout` : à la première contention, SQLite
+échouait immédiatement au lieu de patienter. Désormais 15 s côté app, 30 s côté
+scripts.
+
+**L'import gardait une seule transaction du début à la fin.** Sur des milliers
+de messages, ça verrouille la base en écriture pendant plusieurs minutes :
+l'application ne peut plus rien écrire, et la moindre écriture de sa part tuait
+le script. L'import valide maintenant **tous les 50 messages**
+(`COMMIT_EVERY`).
+
+Conséquence à connaître : **un run interrompu n'est plus annulé en totalité.**
+Avant, un Ctrl-C ramenait la base exactement à son état initial. Maintenant la
+première moitié reste importée — ce qui est voulu : `last_uid` avance avec
+chaque validation, donc une relance reprend où on s'était arrêté au lieu de tout
+refaire, et `imported_mails` empêche tout doublon.
+
+Ces deux correctifs n'ont **pas suffi** : l'import échouait encore, au bout de
+30 s d'attente, au moment de valider. La base est donc passée en **journal WAL**
+(`PRAGMA journal_mode=WAL`), où lecteurs et écrivain ne se bloquent plus.
+
+**Et ça change la façon de sauvegarder.** En WAL, les écritures récentes vivent
+dans `meetings.db-wal` jusqu'au prochain checkpoint : `cp meetings.db` perd
+donc les dernières, en produisant un fichier d'apparence valide. Utiliser
+`utils/backup_db.py` (`VACUUM INTO`), qui écrit un fichier unique et cohérent
+sans arrêter l'application.

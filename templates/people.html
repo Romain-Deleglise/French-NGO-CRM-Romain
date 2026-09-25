@@ -52,11 +52,11 @@
           {% endif %}
         </td>
         <td class="nowrap">{{ ui.contact_tag(p['contact_type']) }}</td>
-        <td>{{ p['role'] or '—' }}</td>
+        <td>{{ p['role'] or '' }}</td>
         <td>
           {% for name in (p['organisation_names'] or '').split('|') if name %}
             <span class="tag">{{ name }}</span>
-          {% else %}<span class="muted">—</span>{% endfor %}
+          {% else %}{% endfor %}
         </td>
         <td>{{ p['stance'] }}</td>
       </tr>

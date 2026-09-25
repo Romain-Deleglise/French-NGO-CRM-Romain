@@ -207,7 +207,7 @@ python3 utils/import_member_mails.py --backfill --auto-publish         # first p
 python3 utils/import_member_mails.py                                   # daily incremental
 ```
 
-**Daily run:** install `deploy/import-member-mails.{service,timer}` (06:10) the
+**Every 10 minutes:** install `deploy/import-member-mails.{service,timer}` the
 same way as the campaign unit:
 ```bash
 sudo cp utils/deploy/import-member-mails.service /etc/systemd/system/
@@ -493,3 +493,27 @@ sudo journalctl -u import-campaign-mails.service -n 50   # see its output
 > A plain **cron** line works too if you prefer:
 > `0 6 * * * docker exec --env-file /opt/volunteer-apps/secrets/website-meeting.env
 > website-meeting-app python3 /app/utils/import_campaign_mails.py >> /var/log/import_campaign_mails.log 2>&1`
+
+## Pont CiviCRM (voir `AUTOMATISATION_CIVICRM.md`)
+
+CiviCRM porte ~12 900 journalistes avec leur adresse et leur média. On ne les
+recopie pas : une fiche est créée le jour où un membre échange avec la personne.
+Les scripts ci-dessous ne parlent jamais à CiviCRM — ils lisent le JSON que `cv`
+a écrit, en lecture seule, orchestrés depuis l'hôte.
+
+| Script | Rôle |
+|---|---|
+| `backup_db.py` | Sauvegarde cohérente par `VACUUM INTO`. **La base étant en WAL, un `cp` ne suffit plus.** |
+| `civicrm.py` | Correspondance CiviCRM → CRM et **test de contrat**. Le seul fichier qu'une mise à jour de CiviCRM peut casser. |
+| `civicrm_lookup.py` | File d'attente `civicrm_pending` et création des fiches : `--list-pending`, `--apply`, `--seed`, `--patterns`, `--apply-names`, `--prune`, `--retry-absent`, `--stats`. |
+| `import_civicrm_medias.py` | Importe les 168 médias en une fois (organisations, aucun impact sur les sélecteurs de personnes). |
+| `importruns.py` | Trace de chaque exécution d'import (`import_runs`) : l'app s'en sert pour afficher la fraîcheur des données et signaler un import en échec. Aucune donnée personnelle. |
+| `maildomains.py` | Les domaines des organisations qu'on suit, **lus dans la base** au lieu d'être en dur. Servent au scan du corps des mails et à savoir si une adresse est déjà connue — rien à reporter dans Workspace. |
+| `learn_conventions.py` | Apprend la convention d'adresses de **tous** les journalistes de CiviCRM (~12 900), pas seulement de nos fiches : `--file <export>`, `--commit`, `--show`. Ne crée **aucune fiche** — ne garde qu'un domaine, un média, un gabarit, un compteur ; les adresses sont jetées. C'est ce qui rend `cbouchouchi@nouvelobs.com` ou `emmanuel.pall@francetv.fr` reconnaissables alors qu'on n'a qu'une fiche sur ces rédactions. |
+| `mailpatterns.py` | La convention d'adresses de chaque média, apprise sur les adresses connues. Sert à **reconnaître** une adresse, jamais à en construire une pour y écrire. Un gabarit est retenu s'il explique au moins 60 % des adresses du domaine (`MIN_SHARE`) : l'unanimité exigée au départ laissait une exception historique annuler une rédaction de 2 000 adresses. |
+| `deploy/civicrm-seed.sh` | Amorçage, une fois : crée les fiches d'un groupe presse restreint, sans quoi aucune adresse de presse n'est rattachable ni aucune convention apprenable. |
+| `deploy/civicrm-sync.sh` | Le cycle quotidien : `cv` → `docker cp` → scripts. Planifié à 06:30 par `civicrm-sync.timer`, après l'import des mails de membres de 06:10. |
+
+Ordre de mise en route : `civicrm-seed.sh --commit`, puis activer
+`civicrm-sync.timer`. Rien à faire côté Google Workspace — sa règle copie déjà
+toute la correspondance de l'association.

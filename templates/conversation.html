@@ -42,11 +42,11 @@
     <div class="mail-msg-body">
       <div class="mail-addr">
         <span class="mail-addr-label">De</span>
-        <span class="mail-addr-val">{{ from_names or '—' }}</span>
+        <span class="mail-addr-val">{{ from_names or '' }}</span>
       </div>
       <div class="mail-addr">
         <span class="mail-addr-label">À</span>
-        <span class="mail-addr-val">{{ to_names or '—' }}</span>
+        <span class="mail-addr-val">{{ to_names or '' }}</span>
       </div>
       {% if x['subject'] %}
       <div class="mail-addr">

@@ -69,17 +69,20 @@ from datetime import datetime, timezone
 from email.header import decode_header, make_header
 from email.utils import getaddresses, parsedate_to_datetime
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import maildomains  # noqa: E402
+import importruns  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.path.join(ROOT, "meetings.db")
 
-# Only élu·es hold addresses on these domains, so finding one in a mail body is a
-# reliable signal — used by --match-body for forwarded threads (an élu's reply a
-# citizen forwarded) where the recipient is quoted in the body, not in a header.
-OFFICIAL_DOMAINS = ("senat.fr", "assemblee-nationale.fr", "europarl.europa.eu")
-_OFFICIAL_RE = re.compile(
-    r"[\w.\-]+@(?:" + "|".join(d.replace(".", r"\.") for d in OFFICIAL_DOMAINS) + r")",
-    re.I,
-)
+# The domains of the organisations we follow. Used by --match-body for forwarded
+# threads (a reply a citizen forwarded) where the real address is quoted in the
+# body rather than sitting in a header. These three are only the floor —
+# maildomains.refresh(db) widens the set to every média (and any other) domain
+# the database already knows, so journalists are covered without anyone
+# maintaining a list. See utils/maildomains.py.
+OFFICIAL_DOMAINS = maildomains.SEED_DOMAINS
 
 # Headers that may carry the real recipient address (the Google Group can rewrite
 # some of them, hence the belt-and-braces list).
@@ -96,13 +99,43 @@ def log(msg):
 
 
 def decoded(value):
-    """RFC 2047-decode a header value into a plain str (never raises)."""
+    """RFC 2047-decode a header value into a plain str (never raises).
+
+    Trois formes arrivent réellement, et seule la première est conforme :
+
+    - `=?UTF-8?Q?S=C3=A9curit=C3=A9?=`, l'encodage MIME normal ;
+    - de l'UTF-8 **brut** dans l'en-tête. `email` le rend alors sous forme
+      d'objet `Header` dont le jeu de caractères est `unknown-8bit`, et le
+      convertir en texte remplace chaque octet par « ? » : un objet devenait
+      « s??curit?? » en base, définitivement. On décode donc les morceaux
+      nous-mêmes, en essayant l'UTF-8 puis les encodages Windows historiques ;
+    - un jeu de caractères annoncé mais faux, traité par le même repli.
+    """
     if not value:
         return ""
     try:
-        return str(make_header(decode_header(value)))
+        parts = decode_header(value)
     except Exception:
-        return value
+        return str(value)
+
+    out = []
+    for chunk, charset in parts:
+        if isinstance(chunk, str):
+            out.append(chunk)
+            continue
+        # `unknown-8bit` n'est pas un encodage : c'est l'aveu que l'expéditeur
+        # n'en a déclaré aucun. À nous de deviner, dans l'ordre du plus probable.
+        candidates = [charset] if charset and charset != "unknown-8bit" else []
+        candidates += ["utf-8", "cp1252", "latin-1"]
+        for candidate in candidates:
+            try:
+                out.append(chunk.decode(candidate))
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        else:
+            out.append(chunk.decode("utf-8", "replace"))
+    return "".join(out)
 
 
 def ensure_state_table(db):
@@ -208,7 +241,7 @@ def match_recipients(msg, db, email_index, match_body=False):
 
     # 3) Optional: official-domain addresses quoted in the body.
     if match_body:
-        for addr in {a.lower() for a in _OFFICIAL_RE.findall(body_text(msg))}:
+        for addr in maildomains.find_addresses(body_text(msg)):
             for pid, name in email_index.get(addr, []):
                 if pid not in seen:
                     seen.add(pid)
@@ -242,7 +275,7 @@ def stage_message(db, msg, uid, mailbox, matches, dry_run, auto_publish):
     # RGPD minimisation: keep the subject (campaign context) but NOT the citizen's
     # identity — we record that the élu·e received a mail, its date and its object,
     # not who sent it. The From header is deliberately never read or stored.
-    summary = f"Mail d'un citoyen à {', '.join(names)} — « {subject} »"
+    summary = f"Mail d'un citoyen à {', '.join(names)} : « {subject} »"
 
     if dry_run:
         mode = "publish" if auto_publish else "stage"
@@ -431,7 +464,7 @@ def extract_pasted_recipients(text):
         is_recipient = (low.startswith("to ") or s.startswith("À :")
                         or low.startswith("à :") or s.startswith("A : "))
         if is_recipient:
-            for addr in {a.lower() for a in _OFFICIAL_RE.findall(line)}:
+            for addr in maildomains.find_addresses(line):
                 out.append((addr, current, subject))
     return out
 
@@ -561,11 +594,16 @@ def main():
     mailbox = os.environ.get("IMAP_MAILBOX", "INBOX")
 
     db = sqlite3.connect(db_path)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.execute("PRAGMA foreign_keys = ON")
     if not args.dry_run:
         ensure_state_table(db)  # creating tables is a write — skip it in dry-run
     email_index = load_email_index(db)
+    domains = maildomains.refresh(db)
     log(f"Loaded {len(email_index)} distinct person e-mail(s) from {db_path}.")
+    log(f"Known domains: {len(domains)} (derived from the fiches themselves).")
     mode = "auto-publish (real mails)" if auto_publish else "moderation queue"
     log(f"Output: {mode}.")
 
@@ -586,6 +624,10 @@ def main():
         return
 
     conn = connect_imap()
+    tracker = importruns.track(db, "campaign_mails", enabled=not args.dry_run)
+    run = tracker.__enter__()
+    failure = None
+
     try:
         last_uid = get_last_uid(db, mailbox)
         uids = fetch_uids(conn, mailbox, last_uid, args.backfill)
@@ -610,10 +652,18 @@ def main():
             db.commit()
 
         verb = "published" if auto_publish else "staged"
+        run.imported, run.inspected = imported, len(uids)
+        run.detail = (f"{imported} courriel(s) intégré(s), {skipped_dup} déjà "
+                      f"connu(s), {unmatched} sans correspondance.")
         log(f"Done. Mails {verb}: {imported} | already-imported skipped: "
             f"{skipped_dup} | no match: {unmatched} | last UID now: "
             f"{max_uid if not args.dry_run else last_uid}.")
+    except BaseException as exc:             # noqa: BLE001 — recorded, re-raised
+        failure = exc
+        run.detail = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
+        tracker.__exit__(type(failure) if failure else None, failure, None)
         try:
             conn.logout()
         except Exception:

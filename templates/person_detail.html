@@ -28,7 +28,7 @@
       <p>
         {% for o in organisations %}
           <a class="tag" href="{{ url_for('organisation_detail', organisation_id=o['id']) }}">{{ o['name'] }}</a>
-        {% else %}<span class="muted">—</span>{% endfor %}
+        {% else %}{% endfor %}
       </p>
     </div>
     <div class="field">
@@ -44,7 +44,7 @@
   <div class="grid-2">
     <div class="field">
       <label>Fonction{% if split_roles(p['role'])|length > 1 %}s{% endif %}</label>
-      <p>{{ p['role'] or '—' }}</p>
+      <p>{{ p['role'] or '' }}</p>
     </div>
     {% if p['portefeuille'] %}
     <div class="field">
@@ -63,14 +63,14 @@
   <div class="grid-2">
     <div class="field">
       <label>Premier contact</label>
-      <p>{{ p['first_contacted'] | fr_date or '—' }}</p>
+      <p>{{ p['first_contacted'] | fr_date or '' }}</p>
     </div>
     <div class="field">
       <label>Relance prévue</label>
       {% if p['follow_up_date'] %}
         <p>{{ p['follow_up_date'] | fr_date }} {{ ui.due_badge(p['follow_up_date']) }}</p>
       {% else %}
-        <p class="muted">—</p>
+        
       {% endif %}
       {% if follow_up_source %}
         <p class="hint">Reprise
@@ -108,11 +108,11 @@
   <div class="grid-2">
     <div class="field">
       <label>Courriel</label>
-      <p>{% if p['email'] %}<a href="mailto:{{ p['email'] }}">{{ p['email'] }}</a>{% else %}—{% endif %}</p>
+      <p>{% if p['email'] %}<a href="mailto:{{ p['email'] }}">{{ p['email'] }}</a>{% endif %}</p>
     </div>
     <div class="field">
       <label>Téléphone</label>
-      <p>{% if p['phone'] %}<a href="tel:{{ p['phone'] }}">{{ p['phone'] }}</a>{% else %}—{% endif %}</p>
+      <p>{% if p['phone'] %}<a href="tel:{{ p['phone'] }}">{{ p['phone'] }}</a>{% endif %}</p>
     </div>
   </div>
 
@@ -127,11 +127,11 @@
   <div class="grid-2">
     <div class="field">
       <label>Religion</label>
-      <p>{{ p['religion'] or '—' }}</p>
+      <p>{{ p['religion'] or '' }}</p>
     </div>
     <div class="field">
       <label>Territoire assigné</label>
-      <p>{{ p['territoire'] or '—' }}</p>
+      <p>{{ p['territoire'] or '' }}</p>
     </div>
   </div>
   {% endif %}
@@ -157,11 +157,11 @@
   <div class="grid-2">
     <div class="field">
       <label>Qui a ajouté la personne</label>
-      <p>{{ added_by or '—' }}</p>
+      <p>{{ added_by or '' }}</p>
     </div>
     <div class="field">
       <label>Validé par</label>
-      <p>{{ validated_by or '—' }}</p>
+      <p>{{ validated_by or '' }}</p>
     </div>
   </div>
 </div>
@@ -187,8 +187,8 @@
       {% for m in meetings %}
       <tr onclick="window.location='{{ url_for('meeting_detail', meeting_id=m['id']) }}'">
         <td class="nowrap">{{ m['meeting_date'] | fr_date }}{% if m['meeting_time'] %} {{ m['meeting_time'] }}{% endif %}</td>
-        <td class="summary-cell">{{ m['summary'] }}</td>
-        <td class="nowrap">{% if m['document_stored_name'] %}📎{% else %}—{% endif %}</td>
+        <td class="summary-cell"><span class="subject">{{ m['summary'] }}</span></td>
+        <td class="nowrap">{% if m['document_stored_name'] %}📎{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -218,13 +218,13 @@
             <span class="tag tag-member">👥 {{ c['members']|join(', ') }}</span>
           {% elif c['type'] == 'citoyen' %}
             <span class="tag tag-citizen">Citoyen</span>
-          {% else %}<span class="muted">—</span>{% endif %}
+          {% else %}{% endif %}
         </td>
         <td class="summary-cell">
-          {{ c['subject'] }}
+          <span class="subject">{{ c['subject'] }}</span>
           {% if c['count'] > 1 %}<span class="thread-count">{{ c['count'] }} messages</span>{% endif %}
         </td>
-        <td class="nowrap">{% if c['has_doc'] %}📎{% else %}—{% endif %}</td>
+        <td class="nowrap">{% if c['has_doc'] %}📎{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

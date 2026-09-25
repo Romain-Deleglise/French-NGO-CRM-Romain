@@ -34,12 +34,12 @@
         <td class="nowrap">
           {% for d in c['directions'] %}{{ directions[d] }}{% if not loop.last %} · {% endif %}{% endfor %}
         </td>
-        <td class="nowrap">{{ c['elus']|join(', ') or '—' }}</td>
+        <td class="nowrap">{{ c['elus']|join(', ') or '' }}</td>
         <td class="summary-cell">
-          {{ c['subject'] }}
+          <span class="subject">{{ c['subject'] }}</span>
           {% if c['count'] > 1 %}<span class="thread-count">{{ c['count'] }} messages</span>{% endif %}
         </td>
-        <td class="nowrap">{% if c['has_doc'] %}📎{% else %}—{% endif %}</td>
+        <td class="nowrap">{% if c['has_doc'] %}📎{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

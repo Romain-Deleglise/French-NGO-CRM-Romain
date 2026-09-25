@@ -134,6 +134,9 @@ def main():
         )
 
     db = sqlite3.connect(DB)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.execute("PRAGMA foreign_keys = ON")
 
     existing = {r[0] for r in db.execute("SELECT name FROM persons")}

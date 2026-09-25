@@ -223,6 +223,15 @@ meetings.db
 # Timestamped copies taken before a bulk import (meetings.db.bak-20260808-141841)
 # don't end in .db, so *.db above does not cover them.
 *.db.bak*
+# WAL journal sidecars. `*.db` does not match `meetings.db-wal`, and that file
+# holds every write since the last checkpoint — often the whole database. The
+# day someone runs the app from a checkout and types `git add .`, this line is
+# what stops the contacts from being published.
+*.db-wal
+*.db-shm
+*.db-journal
+# Taken by init_db() to serialise migrations across gunicorn workers.
+*.migrate.lock
 *.bak
 # Timestamped code backups taken before a migration
 # (app.py.bak-premerge-20260914-232030, templates-static.bak-….tar.gz): the

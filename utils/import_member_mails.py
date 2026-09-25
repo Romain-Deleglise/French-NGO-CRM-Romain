@@ -49,10 +49,16 @@ from email.utils import getaddresses
 
 # Reuse the building blocks already validated in the campaign importer.
 from import_campaign_mails import (  # noqa: E402
-    OFFICIAL_DOMAINS, _OFFICIAL_RE, body_text, decoded, ensure_state_table,
-    get_last_uid, set_last_uid, load_email_index, already_imported, fetch_uids,
-    mail_date_iso, log,
+    body_text, decoded, ensure_state_table, get_last_uid, set_last_uid,
+    load_email_index, already_imported, fetch_uids, mail_date_iso, log,
 )
+# The set of domains belonging to organisations we follow — read from the data
+# rather than hard-coded, so journalists' médias count too. See maildomains.py.
+import maildomains  # noqa: E402
+import importruns  # noqa: E402
+# CiviCRM holds ~12 900 journalists this CRM does not. An address we cannot match
+# is queued here rather than dropped, and civicrm_lookup.py turns it into a fiche.
+from civicrm_lookup import enqueue, ensure_civicrm_tables, is_bulk  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.environ.get("IMAP_DB_PATH", os.path.join(ROOT, "meetings.db"))
@@ -68,9 +74,28 @@ GROUP_ADDRESSES = {
 
 IMPORT_SOURCE = "Import automatique (mails membres)"
 
+# Commit every N messages instead of once at the very end. A --backfill sweep
+# inspects thousands of messages, and a single transaction over the whole run
+# holds the write lock for minutes: the Flask app cannot write meanwhile, and
+# any write it does attempt first makes this script die on "database is
+# locked". Short transactions keep both alive.
+#
+# It also makes an interrupted run resumable rather than wasted, since
+# `last_uid` advances with each commit — at the cost of the all-or-nothing
+# property: stopping half way now leaves the first half imported. That is safe,
+# because `imported_mails` dedups by Message-ID and a rerun picks up where this
+# left off.
+COMMIT_EVERY = 50
+
 
 def is_official(addr):
-    return addr.lower().endswith(tuple("@" + d for d in OFFICIAL_DOMAINS))
+    """On a domain of an organisation we follow (a chamber, a média, …).
+
+    Names kept as-is: this started life meaning "a parliamentary address" and is
+    read that way all through classify(). It now covers média domains too, which
+    is exactly what lets the same pipeline follow press correspondence.
+    """
+    return maildomains.is_known(addr)
 
 
 def is_member(addr):
@@ -369,7 +394,7 @@ def classify(msg, db, email_index, name_patterns=None):
     # 2) Body scan: a reply usually quotes the original, which carries the élu·e's
     #    official address even when the reply's From is something else.
     if to_member and not from_member:
-        body_official = {a.lower() for a in _OFFICIAL_RE.findall(body_text(msg))}
+        body_official = maildomains.find_addresses(body_text(msg))
         matches = resolve(body_official)
         if matches:
             return "received", matches, (to_member[0][1], to_member[0][0]), None, False
@@ -410,6 +435,65 @@ def classify(msg, db, email_index, name_patterns=None):
     return None, [], None, None, False
 
 
+def queue_unknown_counterparts(db, msg, now, enforce_scope=True):
+    """Queue the outside address of a member mail we failed to match.
+
+    Only mails with a member on exactly one side are of interest: those are
+    someone from PauseIA writing to, or hearing from, a person we have no fiche
+    for. Anything else (newsletters, member-to-member, robots) is left alone.
+    Returns the number of addresses newly queued.
+    """
+    # A newsletter, a Notion notification, an Airbnb receipt: sent by a machine
+    # to a list, so there is no person behind the address to look up. Cheapest
+    # and broadest test, hence first.
+    if is_bulk(msg):
+        return 0, 0
+
+    from_pairs = addr_pairs(msg, "From")
+    to_pairs = addr_pairs(msg, "To", "Cc")
+    from_member = [p for p in from_pairs if is_member(p[1])]
+    to_member = [p for p in to_pairs if is_member(p[1])]
+
+    if from_member and not to_member:
+        candidates = to_pairs      # a member wrote to someone unknown
+    elif to_member and not from_member:
+        candidates = from_pairs    # someone unknown wrote to a member
+    else:
+        return 0, 0
+
+    queued = out_of_scope = 0
+    for display, address in candidates:
+        # Only the member's own side is skipped. NOT is_official(): that tests
+        # the *domain*, and an unknown address on a known média domain — a
+        # Figaro journalist we have no fiche for — is the single best candidate
+        # for a CiviCRM lookup. Skipping it is why the first full sweep queued
+        # 195 addresses and not one of them sat on a press domain.
+        #
+        # The skip was defensible while "known" meant the three parliamentary
+        # domains: every élu·e's address there was already in the index, so an
+        # unmatched one was a cabinet address, which thread-based alias learning
+        # handles. Once média domains joined the list, it started throwing away
+        # exactly what this queue exists for.
+        if is_member(address):
+            continue
+        # Une raison positive d'entrer, et non la seule absence de raison d'en
+        # sortir : la règle Workspace copie toute la correspondance externe de
+        # l'association, y compris les mails personnels des membres. Sans ce
+        # test, le médecin d'un membre finissait dans une page consultable par
+        # toute l'équipe. Voir maildomains.in_scope().
+        # `enforce_scope=False` pour un courriel déposé à la main : quelqu'un
+        # a délibérément choisi de le confier au CRM, ce qui est précisément le
+        # consentement qui manque à la capture automatique. La restriction
+        # protège des mails qu'on reçoit sans les avoir demandés ; elle n'a pas
+        # de sens sur un dépôt volontaire.
+        if enforce_scope and not maildomains.in_scope(address):
+            out_of_scope += 1
+            continue
+        if enqueue(db, address, display, now):
+            queued += 1
+    return queued, out_of_scope
+
+
 def record(db, msg, direction, matches, member, learn, low_confidence,
            dry_run, auto_publish):
     message_id = (msg.get("Message-ID") or "").strip()
@@ -427,15 +511,15 @@ def record(db, msg, direction, matches, member, learn, low_confidence,
     if body:
         summary = body
     elif direction == "sent":
-        summary = f"Mail de {member_name} à {elu_names} — « {subject} »"
+        summary = f"Mail de {member_name} à {elu_names} : « {subject} »"
     else:
-        summary = f"Mail de {elu_names} à {member_name} — « {subject} »"
+        summary = f"Mail de {elu_names} à {member_name} : « {subject} »"
 
     # A low-confidence (name-pattern) match is flagged in "personnes concernées"
     # for the moderator, never mixed into the body.
     proposed = elu_names
     if low_confidence:
-        proposed += " — à confirmer : élu·e identifié·e par nom"
+        proposed += " (à confirmer : personne identifiée par son nom)"
 
     # Low-confidence (name-pattern) matches always go to moderation, even in
     # auto-publish mode, so a human confirms the élu·e before it is published.
@@ -508,6 +592,52 @@ def connect_imap():
     return conn
 
 
+def handle_one_message(db, msg, auto_publish=True, enforce_scope=False):
+    """Traiter un courriel isolé, exactement comme l'import le ferait.
+
+    Écrit pour le dépôt manuel (`/echanges/deposer`), qui doit passer par le
+    même classifieur que la capture automatique : une seconde implémentation
+    divergerait au premier correctif. Retourne un état lisible par l'interface :
+
+        'imported'    rattaché à une personne et à un membre
+        'duplicate'   ce Message-ID est déjà en base
+        'queued'      personne reconnue, adresse mise en file « à rattacher »
+        'unmatched'   ni l'un ni l'autre (aucun membre PauseIA dans le courriel)
+
+    L'appelant est responsable du commit : un dépôt de dix fichiers est une
+    seule transaction, ou rien.
+    """
+    # `imported_mails` (le dédoublonnage par Message-ID) vient des scripts, pas
+    # de init_db() : sans elle, un dépôt échoue sur une base que seul l'app a
+    # créée. Les trois sont idempotentes.
+    ensure_state_table(db)
+    ensure_member_tables(db)
+    ensure_civicrm_tables(db)
+    maildomains.refresh(db)
+    maildomains.refresh_scope(db)
+
+    message_id = (msg.get("Message-ID") or "").strip()
+    if message_id and db.execute(
+            "SELECT 1 FROM imported_mails WHERE message_id = ?",
+            (message_id,)).fetchone() is not None:
+        return "duplicate", decoded(msg.get("Subject")) or "(sans objet)"
+
+    subject = decoded(msg.get("Subject")) or "(sans objet)"
+    email_index = load_email_index_with_aliases(db)
+    name_patterns = build_name_pattern_index(db)
+    direction, matches, member, learn, low_conf = classify(
+        msg, db, email_index, name_patterns)
+    if direction:
+        record(db, msg, direction, matches, member, learn, low_conf,
+               dry_run=False, auto_publish=auto_publish)
+        return "imported", subject
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    queued, _ignored = queue_unknown_counterparts(
+        db, msg, now, enforce_scope=enforce_scope)
+    return ("queued" if queued else "unmatched"), subject
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -526,24 +656,40 @@ def main():
     mailbox = os.environ.get("MEMBER_IMAP_MAILBOX", "INBOX")
 
     db = sqlite3.connect(db_path)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.execute("PRAGMA foreign_keys = ON")
     if not args.dry_run:
         ensure_state_table(db)
         ensure_member_tables(db)
+        ensure_civicrm_tables(db)
     # Aliases read is tolerant of the table not existing yet (e.g. dry-run first run).
     email_index = load_email_index_with_aliases(db)
     name_patterns = build_name_pattern_index(db)
+    domains = maildomains.refresh(db)
+    scope = maildomains.refresh_scope(db)
+    log(f"Known domains: {len(domains)} (from the fiches themselves). "
+        f"Queue scope: {len(scope)} domain(s) + public institutions.")
     log(f"Loaded {len(email_index)} élu·e e-mail(s) from {db_path}. "
         f"Output: {'auto-publish' if auto_publish else 'moderation queue'}.")
+
+    # One row per run, so /echanges can say how fresh the data is — and say so
+    # loudly when a run fails. Started before connect_imap(): an expired
+    # password is exactly the failure that must leave a trace.
+    tracker = importruns.track(db, "member_mails", enabled=not args.dry_run)
+    run = tracker.__enter__()
+    failure = None
 
     conn = connect_imap()
     try:
         last_uid = get_last_uid(db, "members")
         uids = fetch_uids(conn, mailbox, last_uid, args.backfill)
         log(f"Audit mailbox {mailbox!r}: {len(uids)} message(s) to inspect.")
-        imported = dup = skipped = max_uid = 0
+        imported = dup = skipped = queued = out_of_scope = max_uid = 0
         max_uid = last_uid
-        for uid in uids:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for index, uid in enumerate(uids):
             status, data = conn.uid("fetch", str(uid), "(RFC822)")
             if status == "OK" and data and data[0]:
                 msg = email.message_from_bytes(data[0][1])
@@ -559,18 +705,39 @@ def main():
                         imported += 1
                     else:
                         skipped += 1
+                        if not args.dry_run:
+                            new_queued, ignored = queue_unknown_counterparts(
+                                db, msg, now)
+                            queued += new_queued
+                            out_of_scope += ignored
                         if args.verbose:
                             log(f"  [skip] {decoded(msg.get('Subject'))!r}")
             max_uid = max(max_uid, uid)
+            if not args.dry_run and (index + 1) % COMMIT_EVERY == 0:
+                # UIDs come in ascending order, so recording the highest one
+                # seen is an honest resume point.
+                set_last_uid(db, "members", max_uid)
+                db.commit()
 
         if not args.dry_run:
             set_last_uid(db, "members", max_uid)
             db.commit()
         verb = "published" if auto_publish else "staged"
+        run.imported, run.inspected = imported, len(uids)
+        run.detail = (f"{imported} courriel(s) intégré(s), {dup} déjà connu(s), "
+                      f"{skipped} non rattaché(s), {queued} adresse(s) en file.")
         log(f"Done. Mails {verb}: {imported} | already-imported skipped: {dup} | "
-            f"not member↔élu: {skipped} | last UID now: "
-            f"{max_uid if not args.dry_run else last_uid}.")
+            f"not member↔élu: {skipped} | queued for CiviCRM: {queued} | "
+            f"outside the queue's scope (personal mail, suppliers): {out_of_scope} | "
+            f"last UID now: {max_uid if not args.dry_run else last_uid}.")
+    except BaseException as exc:             # noqa: BLE001 — recorded, re-raised
+        # Including KeyboardInterrupt: a run cut short did not finish its sweep,
+        # and the interface must not present it as a healthy one.
+        failure = exc
+        run.detail = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
+        tracker.__exit__(type(failure) if failure else None, failure, None)
         try:
             conn.logout()
         except Exception:

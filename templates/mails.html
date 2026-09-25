@@ -1,5 +1,18 @@
 {% extends "base.html" %}
-{% block title %}Courriels{% endblock %}
+{% from "_macros.html" import import_banner %}
+{% block title %}Courriels
+{% if page > 1 or has_next %}
+<nav class="pager">
+  {% if page > 1 %}
+  <a class="btn btn-ghost" href="{{ url_for('mails', q=q, page=page - 1) }}">← Précédents</a>
+  {% endif %}
+  <span class="muted">Page {{ page }}</span>
+  {% if has_next %}
+  <a class="btn btn-ghost" href="{{ url_for('mails', q=q, page=page + 1) }}">Suivants →</a>
+  {% endif %}
+</nav>
+{% endif %}
+{% endblock %}
 {% block content %}
 <div class="page-head">
   <h1>Suivi des échanges</h1>
@@ -9,8 +22,12 @@
 <nav class="subtabs">
   <a class="subtab" href="{{ url_for('exchanges') }}">Échanges</a>
   <a class="subtab" href="{{ url_for('members') }}">Membres</a>
+  <a class="subtab" href="{{ url_for('unlinked') }}">À rattacher{% if unlinked_count %} <span class="badge">{{ unlinked_count }}</span>{% endif %}</a>
+  <a class="subtab" href="{{ url_for('deposit') }}">Déposer</a>
   <a class="subtab active" href="{{ url_for('mails') }}">Tous les courriels</a>
 </nav>
+
+{{ import_banner(import_state) }}
 
 <form class="search" method="get" action="{{ url_for('mails') }}">
   <input type="search" name="q" value="{{ q }}"
@@ -39,12 +56,14 @@
           {% if x['important'] %}<span title="Important">⭐</span>{% endif %}
         </td>
         <td class="nowrap">{{ directions[x['direction']] }}</td>
-        <td><strong>{{ x['person_names'] or '—' }}</strong></td>
+        <td><strong>{{ x['person_names'] or '' }}</strong></td>
         <td class="summary-cell">
-          {% if x['subject'] %}<strong>{{ x['subject'] }}</strong><br>{% endif %}
-          {{ x['summary'] }}
+          <span class="subject">
+            {% if x['subject'] %}<strong>{{ x['subject'] }}</strong><br>{% endif %}
+            {{ x['summary'] }}
+          </span>
         </td>
-        <td class="nowrap">{% if x['document_stored_name'] %}📎{% else %}—{% endif %}</td>
+        <td class="nowrap">{% if x['document_stored_name'] %}📎{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

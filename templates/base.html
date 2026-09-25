@@ -5,12 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Rencontres{% endblock %} · PauseIA</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" type="image/svg+xml"
+        href="{{ url_for('static', filename='favicon.svg') }}">
   <script src="{{ url_for('static', filename='form-masks.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='nav.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='rows.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='deposit.js') }}" defer></script>
 </head>
 <body>
   <header class="site-header">
     <a class="brand" href="{{ url_for('index') }}">📋 Journal des rencontres et des médias</a>
-    <nav>
+    {% if session.get('authenticated') %}
+    {# Visible sur téléphone seulement, et seulement si nav.js s'est exécuté
+       (voir static/nav.js) : sans lui la barre reste déroulée. #}
+    <button type="button" class="nav-toggle" aria-expanded="false"
+            aria-controls="nav-principal">
+      <span aria-hidden="true">☰</span> Menu
+      {% if pending_count or unlinked_count %}<span class="badge">{{ (pending_count or 0) + (unlinked_count or 0) }}</span>{% endif %}
+    </button>
+    {% endif %}
+    <nav id="nav-principal">
       {% if session.get('authenticated') %}
         {# Three chip families, by what the tab is for: the two pages you act
            on (TODO red, Répartition green), the calendar, and the five record
@@ -35,7 +49,9 @@
     </nav>
   </header>
 
-  <main class="container">
+  {# Les pages denses (un tableau qui porte aussi une action) élargissent le
+     gabarit : à 960 px la colonne d'action sortait de sa carte. #}
+  <main class="container {% block container_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="flashes">

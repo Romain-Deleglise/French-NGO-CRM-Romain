@@ -83,6 +83,23 @@ a:hover { text-decoration: underline; }
 .site-header nav a { color: var(--muted); font-weight: 500; }
 .site-header nav a:hover { color: var(--ink); text-decoration: none; }
 
+/* Bouton du menu mobile : masqué par défaut, affiché par la requête média
+   ci-dessous (et seulement quand nav.js a pu s'exécuter). */
+.nav-toggle {
+  display: none;
+  align-items: center;
+  gap: .4rem;
+  padding: .4rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.nav-toggle:hover { border-color: var(--brand); }
+
 .site-footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -91,6 +108,7 @@ a:hover { text-decoration: underline; }
 }
 
 .container { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+.container-wide { max-width: 1200px; }
 
 /* ---------- Headings ---------- */
 .page-head {
@@ -101,7 +119,10 @@ a:hover { text-decoration: underline; }
   margin-bottom: 1.25rem;
 }
 h1 { font-size: 1.6rem; margin: 0; }
-.head-actions { display: flex; gap: .5rem; }
+/* Les boutons d'en-tête (« + Nouvelle rencontre », « Valider »…) peuvent être
+   deux ou trois et porter des libellés longs : sans retour à la ligne, ils
+   poussaient la page hors de l'écran sur /repartition à 390 px. */
+.head-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 h2 { font-size: 1.2rem; margin: 2rem 0 .75rem; }
 .muted { color: var(--muted); }
 
@@ -147,6 +168,20 @@ h2 { font-size: 1.2rem; margin: 2rem 0 .75rem; }
 
 /* ---------- Search ---------- */
 .search { display: flex; gap: .5rem; margin-bottom: 1.25rem; }
+/* Recherche sur une ligne, filtres étiquetés sur la suivante. */
+.search-filters { flex-direction: column; gap: .5rem; }
+.search-line { display: flex; gap: .5rem; align-items: flex-end; }
+.search-line-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  font-size: .82rem;
+  color: var(--muted);
+}
+.search-line-filters select { font: inherit; padding: .45rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+/* Le pendant de .col-secondary : ce qui ne s'affiche QUE sur petit écran,
+   parce que la colonne qui le portait a disparu. */
+.only-narrow { display: none; }
 .search input[type="search"] {
   flex: 1;
   padding: .55rem .8rem;
@@ -161,8 +196,14 @@ h2 { font-size: 1.2rem; margin: 2rem 0 .75rem; }
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* `overflow: hidden` clipped the rounded corners nicely and, on a phone, made
+     a wide table push the whole page sideways instead — the nav, the filters
+     and the footer all scrolled with it, and the last columns were simply
+     unreachable. The table scrolls inside its own card now. */
+  overflow-x: auto;
+  overflow-y: hidden;
   box-shadow: var(--shadow);
+  -webkit-overflow-scrolling: touch;
 }
 table.meetings { width: 100%; border-collapse: collapse; }
 table.meetings thead th {
@@ -179,16 +220,39 @@ table.meetings tbody td { padding: .8rem 1rem; border-bottom: 1px solid var(--li
 table.meetings tbody tr:last-child td { border-bottom: 0; }
 table.meetings tbody tr { cursor: pointer; transition: background .1s; }
 table.meetings tbody tr:hover { background: var(--brand-soft); }
+/* La ligne étant atteignable au clavier (voir static/rows.js), elle doit
+   montrer où se trouve le focus. */
+table.meetings tbody tr:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+  background: var(--brand-soft);
+}
 .nowrap { white-space: nowrap; }
-.summary-cell {
-  max-width: 380px;
+/* The subject, shortened cleanly. The clamp used to sit on the cell itself,
+   which also held the « 4 messages » badge: the badge was dragged into the
+   clamped box and sliced in half, and a third line showed through cut across
+   the middle. Clamping the text alone, and giving the column room to breathe,
+   fixes both. */
+.summary-cell { min-width: 220px; }
+.summary-cell .subject {
   overflow: hidden;
-  text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 .count { margin-top: .75rem; font-size: .85rem; }
+.pager { display: flex; align-items: center; gap: .75rem; margin-top: 1rem; }
+
+/* Un message replié dans un fil n'avait aucun indice qu'il se dépliait : le
+   marqueur natif est masqué (voir .mail-msg-head), donc son aperçu tronqué
+   passait pour une donnée manquante. */
+.mail-msg-head::after {
+  content: "⌄";
+  margin-left: .4rem;
+  color: var(--muted);
+  transition: transform .15s;
+}
+.mail-msg[open] > .mail-msg-head::after { transform: rotate(180deg); }
 
 /* ---------- Tags ---------- */
 .tag {
@@ -787,19 +851,22 @@ a.cal-ev:hover {
   border-style: solid;
 }
 
-/* The five record types — Rencontres, Personnes, Organisations, Interventions,
-   Contenus — in the app's orange, the same fill as the « + Nouveau… » buttons
-   on their list pages. */
+/* The six record types — Rencontres, Personnes, Courriels, Organisations,
+   Interventions, Contenus — in the app's orange, as a soft chip.
+   They used to carry the full orange fill with white text, like the
+   « + Nouveau… » buttons. Two problems, visible as soon as you look at the bar
+   rather than at one tab: they were the ONLY filled chips among eight, so six
+   saturated blocks drowned out TODO and Répartition — the two tabs you are
+   meant to act on — and a navigation tab shouted exactly as loudly as the
+   page's primary button. The fill now belongs to buttons alone; the nav is one
+   family of pale chips whose ink carries the colour code. */
 .site-header nav a.nav-record {
-  background: var(--brand);
-  /* Filled, so the border is there only to match the others' box size. */
-  border-color: transparent;
-  color: #fff;
-  /* 500, matching .btn — the same #fff at 600 reads harsher against the
-     orange, because the heavier strokes carry more of it. */
+  background: var(--brand-soft);
+  border-color: #fcd9a8;
+  color: var(--brand-ink);
   font-weight: 500;
 }
-.site-header nav a.nav-record:hover { background: var(--brand-ink); color: #fff; }
+.site-header nav a.nav-record:hover { background: #ffe0b8; color: var(--brand-ink); }
 
 /* Calendrier: the press blue, on its own now that the record tabs are orange. */
 .site-header nav a.nav-calendar {
@@ -914,3 +981,171 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
 .split-org input[type="number"]::-webkit-outer-spin-button,
 .split-typehead input[type="number"]::-webkit-inner-spin-button,
 .split-typehead input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Freshness of the mail import, on the pages built from it. Three states, and
+   the two that matter are impossible to miss: a silent pipeline used to look
+   exactly like a quiet week. */
+.import-status {
+  margin: 0 0 1rem;
+  padding: .55rem .8rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: .92rem;
+}
+.import-status .muted { display: block; margin-top: .25rem; font-size: .85rem; }
+.import-ok    { background: #f1f8f2; border-color: #cfe6d4; color: #2f5d3a; }
+.import-stale { background: #fff8e6; border-color: #f0dca8; color: #7a5b12; }
+.import-error { background: #fdf0f0; border-color: #f0c2c2; color: #8a2b2b; }
+
+
+/* ---------- Deux formulaires côte à côte dans une cellule (/echanges/a-rattacher) */
+.inline-form { display: inline-flex; gap: .35rem; align-items: center; }
+.inline-form + .inline-form { margin-left: .35rem; }
+.inline-form select { max-width: 11rem; }
+/* Une adresse peut être très longue (t.korutos-chatam@mouvementecho.fr) : sans
+   coupure elle poussait la colonne d'action hors de la carte, y compris sur un
+   écran large — et c'est l'action qui est l'objet de la page. */
+/* `overflow-wrap: anywhere` plutôt que `word-break` : la coupure n'a lieu
+   que si la colonne est vraiment trop étroite, au lieu de couper au milieu
+   d'une adresse qui tenait. */
+.addr-cell { overflow-wrap: anywhere; min-width: 15rem; }
+
+/* ---------- Téléphone ----------
+   Vérifié au chromium à 390 px : avant ces règles, toutes les pages à tableau
+   débordaient horizontalement (jusqu'à 425 px hors écran sur /echanges), la
+   barre de navigation s'empilait en escalier contre le bord droit et les
+   filtres sortaient de l'écran. */
+@media (max-width: 720px) {
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .5rem;
+    padding: .7rem 1rem;
+    position: static;            /* un bandeau collant de 4 lignes mange l'écran */
+  }
+  .site-header nav { justify-content: flex-start; gap: .35rem .6rem; }
+
+  /* Le menu ne se replie que si nav.js a posé `has-js` : sans JavaScript la
+     barre reste déroulée plutôt que de devenir un menu qui ne s'ouvre pas. */
+  .site-header.has-js .nav-toggle { display: inline-flex; }
+  .site-header.has-js nav { display: none; }
+  .site-header.has-js.nav-open nav {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .15rem;
+    width: 100%;
+    padding-top: .5rem;
+    border-top: 1px solid var(--line);
+  }
+  .site-header.has-js.nav-open nav a { padding: .5rem .2rem; width: 100%; }
+  .brand { font-size: 1rem; }
+  .container { padding: 1rem; }
+
+  /* Les onglets défilent au doigt plutôt que de s'empiler en colonnes. */
+  .subtabs {
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .subtabs::-webkit-scrollbar { display: none; }
+  .subtab { flex: 0 0 auto; }
+
+  /* Les filtres l'un sous l'autre, en pleine largeur : trois sélecteurs côte à
+     côte à 390 px, personne ne peut les lire ni les toucher. */
+  .search { flex-wrap: wrap; }
+  .search input[type="search"] { flex: 1 1 100%; }
+  .search select, .search .btn { flex: 1 1 auto; }
+  .search-line { flex-wrap: wrap; }
+  .search-line-filters label { flex: 1 1 8rem; }
+  .search-line-filters select { width: 100%; }
+
+  .page-head { flex-wrap: wrap; gap: .5rem; }
+  .head-actions { width: 100%; }
+  .head-actions .btn { flex: 1 1 auto; text-align: center; }
+
+  /* Un tableau qui défile horizontalement cache toujours la même chose : la
+     dernière colonne, souvent la plus utile. Les colonnes d'appoint sortent
+     donc du tableau sur téléphone — l'information reste accessible en ouvrant
+     la ligne, qui est de toute façon cliquable. */
+  .col-secondary { display: none; }
+  .only-narrow { display: inline; }
+
+  /* Trois colonnes doivent tenir dans 390 px : la largeur minimale confortable
+     de l'objet (220 px) les faisait déborder à elle seule. */
+  .summary-cell { min-width: 0; }
+  table.meetings { font-size: .9rem; }
+  table.meetings thead th,
+  table.meetings tbody td { padding-left: .55rem; padding-right: .55rem; }
+  /* La pastille « 4 messages » passe sous l'objet au lieu d'être tronquée. */
+  .thread-count { display: inline-block; margin: .2rem 0 0; }
+
+  /* /echanges/a-rattacher : six colonnes ne tiennent pas, et c'est la colonne
+     d'action qui se retrouvait hors écran — sur une page dont l'action EST
+     l'objet. Chaque ligne devient une fiche empilée, le bouton en pleine
+     largeur. (Les autres tableaux gardent leurs colonnes : on y lit, on n'y
+     agit pas.) */
+  .table-unlinked, .table-unlinked tbody, .table-unlinked tr, .table-unlinked td {
+    display: block;
+    width: 100%;
+  }
+  .table-unlinked thead { display: none; }
+  .table-unlinked tr {
+    padding: .75rem .25rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .table-unlinked td { border: 0; padding: .15rem .55rem; }
+  /* `.table-unlinked td` (classe + élément) l'emporte sur `.col-secondary`
+     seule : sans cette règle, les colonnes masquées réapparaissaient une fois
+     la ligne empilée. */
+  .table-unlinked td.col-secondary { display: none; }
+  .table-unlinked td[data-label]::before {
+    content: attr(data-label) " : ";
+    color: var(--muted);
+    font-size: .85rem;
+  }
+  .inline-form { display: flex; flex-wrap: wrap; margin: .4rem 0 0; }
+  .inline-form + .inline-form { margin-left: 0; }
+  /* `min-width: 0` : sans lui un <select> refuse de descendre sous la largeur
+     de sa plus longue option et éjecte le bouton hors de l'écran. */
+  .inline-form select { max-width: none; flex: 1 1 100%; min-width: 0; }
+  .inline-form .btn { flex: 1 1 auto; }
+}
+
+
+/* ---------- Dépôt de courriels (/echanges/deposer) ---------- */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .3rem;
+  padding: 2rem 1rem;
+  margin-bottom: 1rem;
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone:focus-within { border-color: var(--brand); }
+/* Pendant le survol d'un fichier : la cible doit être évidente, sinon on lâche
+   à côté et le navigateur ouvre le fichier au lieu de le déposer. */
+.dropzone.is-over { border-color: var(--brand); background: var(--brand-soft); }
+.dropzone-icon { font-size: 1.8rem; }
+.dropzone-title { font-weight: 600; }
+/* L'input reste visible pour qui n'a pas JavaScript : c'est alors le seul
+   moyen de déposer. Dès que deposit.js tourne, le <label> ouvre le sélecteur
+   et l'input n'a plus lieu d'encombrer. */
+.dropzone input[type="file"] { margin-top: .6rem; font: inherit; }
+.dropzone.has-js input[type="file"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.dropzone-files { font-size: .9rem; color: var(--brand-ink); font-weight: 600; }
+.deposit-help { margin: 1.5rem 0; }
+.deposit-help summary { cursor: pointer; font-weight: 600; }
+.deposit-results-title { font-size: 1.05rem; margin: 1.5rem 0 .6rem; }

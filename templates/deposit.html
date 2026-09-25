@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "_macros.html" import import_banner %}
+{% block title %}Déposer un courriel{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Suivi des échanges</h1>
+</div>
+
+<nav class="subtabs">
+  <a class="subtab" href="{{ url_for('exchanges') }}">Échanges</a>
+  <a class="subtab" href="{{ url_for('members') }}">Membres</a>
+  <a class="subtab" href="{{ url_for('unlinked') }}">À rattacher{% if unlinked_count %}
+    <span class="badge">{{ unlinked_count }}</span>{% endif %}</a>
+  <a class="subtab active" href="{{ url_for('deposit') }}">Déposer</a>
+  <a class="subtab" href="{{ url_for('mails') }}">Tous les courriels</a>
+</nav>
+
+{{ import_banner(import_state) }}
+
+<p class="muted">L'import automatique ne retient que les échanges avec des
+  contacts que l'association a une raison de suivre : une rédaction connue, une
+  institution publique. Un journaliste qui écrit depuis son adresse personnelle
+  n'y entre pas, et c'est voulu : rien ne l'y distinguerait de la
+  correspondance privée d'un membre.
+  <strong>Ici, vous décidez.</strong> Déposez le courriel et il sera enregistré
+  comme les autres.</p>
+
+{% if not importer %}
+<p class="import-status import-error">⚠️ Le module d'import n'est pas présent
+  dans le conteneur : <code>utils/</code> n'est pas copié par l'image Docker et
+  doit y être injecté (<code>docker cp</code>). Le dépôt est indisponible tant
+  que c'est le cas.</p>
+{% endif %}
+
+<form method="post" action="{{ url_for('deposit') }}"
+      enctype="multipart/form-data" id="deposit-form">
+  {# La zone de dépôt est un <label> : sans JavaScript, elle reste un bouton de
+     sélection de fichiers parfaitement fonctionnel. #}
+  <label class="dropzone" id="dropzone" for="courriels">
+    <span class="dropzone-icon" aria-hidden="true">📧</span>
+    <span class="dropzone-title">Glissez vos courriels ici</span>
+    <span class="muted">ou cliquez pour les choisir · fichiers <code>.eml</code>,
+      plusieurs à la fois</span>
+    <input type="file" id="courriels" name="courriels" accept=".eml,.msg,.txt"
+           multiple {{ 'disabled' if not importer }}>
+    <span class="dropzone-files" id="dropzone-files"></span>
+  </label>
+  <button class="btn btn-primary" type="submit" {{ 'disabled' if not importer }}>
+    Déposer</button>
+</form>
+
+<details class="deposit-help">
+  <summary>Comment récupérer un fichier .eml ?</summary>
+  <p class="muted"><strong>Gmail</strong> : ouvrir le message, menu «&nbsp;⋮&nbsp;»
+    en haut à droite, <em>Télécharger le message</em>.<br>
+    <strong>Thunderbird</strong> : clic droit sur le message, <em>Enregistrer
+    sous</em>.<br>
+    <strong>Apple Mail</strong> : glisser le message directement du logiciel vers
+    cette zone.<br>
+    <strong>Outlook</strong> : <em>Fichier → Enregistrer sous</em>, format
+    <em>.eml</em> (ou glisser le message vers le bureau).</p>
+  <p class="muted">Un fil entier se dépose en une fois : sélectionnez tous les
+    messages. Un courriel déjà enregistré est reconnu et ignoré, vous pouvez
+    donc déposer sans crainte de doublon.</p>
+</details>
+
+{% if session.get('deposit_results') %}
+<h2 class="deposit-results-title">Dernier dépôt</h2>
+<div class="table-wrap">
+  <table class="meetings">
+    <thead><tr><th>Fichier</th><th>Résultat</th></tr></thead>
+    <tbody>
+      {% for name, state, detail in session.pop('deposit_results') %}
+      <tr>
+        <td>{{ name }}</td>
+        <td>
+          {% if state == 'imported' %}<span class="tag tag-member">Enregistré</span>
+          {% elif state == 'queued' %}<span class="tag">Mis en file</span>
+            <a href="{{ url_for('unlinked') }}">à rattacher</a>
+          {% elif state == 'duplicate' %}<span class="muted">Déjà connu</span>
+          {% elif state == 'unmatched' %}<span class="muted">Aucun membre
+            PauseIA identifié dans ce courriel</span>
+          {% else %}<span class="muted">Refusé : {{ detail }}</span>{% endif %}
+          {% if state in ('imported', 'duplicate') %}
+          <span class="muted">· {{ detail }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

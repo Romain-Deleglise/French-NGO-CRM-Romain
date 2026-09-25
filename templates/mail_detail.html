@@ -77,7 +77,7 @@
 
   <div class="field">
     <label>Objet</label>
-    <p>{{ x['subject'] or '—' }}</p>
+    <p>{{ x['subject'] or '' }}</p>
   </div>
 
   <div class="field">
@@ -88,11 +88,11 @@
   <div class="grid-2">
     <div class="field">
       <label>Qui a reçu / envoyé le mail</label>
-      <p>{{ received_by or '—' }}</p>
+      <p>{{ received_by or '' }}</p>
     </div>
     <div class="field">
       <label>Validé par</label>
-      <p>{{ validated_by or '—' }}</p>
+      <p>{{ validated_by or '' }}</p>
     </div>
   </div>
 

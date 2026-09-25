@@ -19,13 +19,13 @@
       <tr onclick="window.location='{{ url_for('meeting_detail', meeting_id=m['id']) }}'">
         <td class="nowrap">{{ m['meeting_date'] | fr_date }}{% if m['meeting_time'] %}<br><span class="muted">{{ m['meeting_time'] }}</span>{% endif %}
           {% if m['alt_dates'] %}<br><span class="tag tag-tentative">date à confirmer</span>{% endif %}</td>
-        <td><strong>{{ m['person_names'] or '—' }}</strong></td>
+        <td><strong>{{ m['person_names'] or '' }}</strong></td>
         <td class="email-cell">
           {# Stop the row's click-through: these links are the point of the cell. #}
           {% for addr in (m['person_emails'] or '').split(', ') if addr %}
             <a href="mailto:{{ addr }}" onclick="event.stopPropagation()">{{ addr }}</a>{% if not loop.last %}<br>{% endif %}
           {% else %}
-            <span class="muted">—</span>
+            
           {% endfor %}
         </td>
         <td>
@@ -33,9 +33,9 @@
             <span class="tag">{{ name }}</span>
           {% endfor %}
         </td>
-        <td class="summary-cell">{{ m['summary'] }}</td>
+        <td class="summary-cell"><span class="subject">{{ m['summary'] }}</span></td>
         <td class="nowrap">
-          {% if m['document_stored_name'] %}📎{% else %}—{% endif %}
+          {% if m['document_stored_name'] %}📎{% endif %}
         </td>
       </tr>
       {% endfor %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import import_banner %}
 {% block title %}Membres{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -8,17 +9,22 @@
 <nav class="subtabs">
   <a class="subtab" href="{{ url_for('exchanges') }}">Échanges</a>
   <a class="subtab active" href="{{ url_for('members') }}">Membres</a>
+  <a class="subtab" href="{{ url_for('unlinked') }}">À rattacher{% if unlinked_count %} <span class="badge">{{ unlinked_count }}</span>{% endif %}</a>
+  <a class="subtab" href="{{ url_for('deposit') }}">Déposer</a>
   <a class="subtab" href="{{ url_for('mails') }}">Tous les courriels</a>
 </nav>
 
+{{ import_banner(import_state) }}
+
 <p class="muted">Comptes @pauseia.fr, ajoutés automatiquement à partir de leur
-correspondance avec les élu·es (import des mails membres).</p>
+correspondance, avec des élu·es comme avec la presse (import des mails
+membres, toutes les 10 minutes).</p>
 
 {% if members %}
 <div class="table-wrap">
   <table class="meetings">
     <thead>
-      <tr><th>Nom</th><th>Adresse</th><th>Courriels avec élu·es</th></tr>
+      <tr><th>Nom</th><th>Adresse</th><th>Courriels enregistrés</th></tr>
     </thead>
     <tbody>
       {% for m in members %}
@@ -35,7 +41,7 @@ correspondance avec les élu·es (import des mails membres).</p>
 {% else %}
 <div class="empty">
   <p>Aucun membre enregistré pour le moment. Ils apparaissent dès qu'ils
-     échangent un courriel avec un·e élu·e (import automatique).</p>
+     échangent un courriel avec un contact du CRM (import automatique).</p>
 </div>
 {% endif %}
 {% endblock %}

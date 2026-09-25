@@ -27,7 +27,7 @@
     <div class="todo-body">
       <a class="todo-title"
          href="{% if r['kind'] == 'meeting' %}{{ url_for('meeting_detail', meeting_id=r['rec_id']) }}{% else %}{{ url_for('mail_detail', mail_id=r['rec_id']) }}{% endif %}">
-        {{ r['person_names'] or '—' }}
+        {{ r['person_names'] or '' }}
       </a>
       <p class="todo-sub">
         Relance prévue le {{ r['follow_up_date'] | fr_date }},

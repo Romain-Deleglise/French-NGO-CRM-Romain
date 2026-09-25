@@ -1,9 +1,21 @@
 [Unit]
-Description=Run the members' mail import daily
+Description=Run the members' mail import every 10 minutes
 
 [Timer]
-OnCalendar=*-*-* 06:10:00
+# The Workspace rule copies a member's mail into the audit mailbox the instant
+# it is sent; only this import stood between that and the CRM. Daily meant a
+# member who wrote at 10:00 saw nothing before the next morning, with no way to
+# tell a normal delay from a lost exchange. Ten minutes makes "c'est enregistré"
+# something the interface can actually show.
+#
+# Cheap: without --backfill the import searches `UID <last+1>:*`, so a run with
+# no new mail fetches nothing. The full sweep stays where it belongs, in
+# civicrm-sync at 06:30.
+OnBootSec=5min
+OnUnitActiveSec=10min
+# A missed window (server down) is caught up once, not replayed for each slot.
 Persistent=true
+AccuracySec=1min
 
 [Install]
 WantedBy=timers.target

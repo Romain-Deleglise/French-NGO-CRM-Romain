@@ -22,7 +22,7 @@
       <label>{% if o['org_type'] == 'Média' %}Type de média
              {%- elif o['org_type'] == 'Culte' %}Religion
              {%- else %}Chambre{% endif %}</label>
-      <p>{{ o['media_type'] or o['chambre'] or o['religion'] or '—' }}</p>
+      <p>{{ o['media_type'] or o['chambre'] or o['religion'] or '' }}</p>
     </div>
     <div class="field">
       <label>Position sur PauseIA</label>
@@ -33,7 +33,7 @@
   {% if o['org_type'] == 'Média' %}
   <div class="field">
     <label>Orientation politique</label>
-    <p>{{ o['orientation'] or '—' }}</p>
+    <p>{{ o['orientation'] or '' }}</p>
   </div>
   {% endif %}
 
@@ -52,11 +52,11 @@
   <div class="grid-2">
     <div class="field">
       <label>Qui a ajouté l'organisation</label>
-      <p>{{ added_by or '—' }}</p>
+      <p>{{ added_by or '' }}</p>
     </div>
     <div class="field">
       <label>Validé par</label>
-      <p>{{ validated_by or '—' }}</p>
+      <p>{{ validated_by or '' }}</p>
     </div>
   </div>
 </div>
@@ -71,7 +71,7 @@
       <tr onclick="window.location='{{ url_for('person_detail', person_id=p['id']) }}'">
         <td><strong>{{ p['name'] }}</strong></td>
         <td class="nowrap">{{ ui.contact_tag(p['contact_type']) }}</td>
-        <td>{{ p['role'] or '—' }}</td>
+        <td>{{ p['role'] or '' }}</td>
         <td>{{ p['stance'] }}</td>
       </tr>
       {% endfor %}

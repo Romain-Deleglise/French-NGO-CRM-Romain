@@ -20,16 +20,20 @@ Run with:  uv run flask --app app run --debug
 """
 
 import calendar as pycalendar
+import contextlib
+import email
+import fcntl
 import math
 import os
 import random
 import re
 import sqlite3
+import sys
 import time
 import unicodedata
 import uuid
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -39,6 +43,7 @@ from flask import (
     abort,
     flash,
     g,
+    make_response,
     redirect,
     render_template,
     request,
@@ -53,7 +58,10 @@ from werkzeug.utils import secure_filename
 # --------------------------------------------------------------------------- #
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "meetings.db"
+# Overridable so tests (and a throwaway instance) can point somewhere else; the
+# utils/ scripts already take IMAP_DB_PATH the same way. Unset, it is the file
+# next to app.py — which is /app/meetings.db inside the container.
+DB_PATH = Path(os.environ.get("CRM_DB_PATH") or (BASE_DIR / "meetings.db"))
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -638,6 +646,12 @@ AUTO_IMPORT_LABEL = (
 )
 
 # Mail directions: stored value -> French label shown in the UI.
+# Combien de courriels chaque page en lit. Le suivi des échanges regroupe en
+# fils, donc il lit une fenêtre de courriels ; /mails pagine simplement.
+EXCHANGES_WINDOW = 500
+EXCHANGES_WINDOW_MAX = 20000
+MAILS_PER_PAGE = 100
+
 MAIL_DIRECTIONS = {
     "sent": "Envoyé",
     "received": "Reçu",
@@ -725,6 +739,11 @@ def get_db():
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
+        # The utils/ importers write to this same file, and a long import used
+        # to make every request that touched the database fail outright with
+        # "database is locked". Wait for the writer instead of 500-ing at the
+        # first contention.
+        g.db.execute("PRAGMA busy_timeout = 15000")
         g.db.create_function("name_key", 1, name_sort_key, deterministic=True)
     return g.db
 
@@ -796,9 +815,156 @@ def inject_pending_count():
     return {"pending_count": total}
 
 
+@app.context_processor
+def inject_import_state():
+    """Expose the freshness of the mail import to the templates that show it.
+
+    A context processor rather than three route arguments: the banner belongs on
+    every page built from the import, and the query is one indexed row. Skipped
+    for anonymous visitors, who see the public declaration forms only.
+    """
+    if not session.get("authenticated"):
+        return {"import_state": None, "unlinked_count": 0}
+    db = get_db()
+    try:
+        waiting = db.execute(
+            "SELECT COUNT(*) FROM civicrm_pending WHERE status IN ('pending', "
+            "'absent')").fetchone()[0]
+    except sqlite3.Error:
+        waiting = 0
+    return {"import_state": import_status(db), "unlinked_count": waiting}
+
+
+# The member import runs every 10 minutes. Beyond this, three runs in a row have
+# failed to happen and the interface should say so rather than look normal.
+IMPORT_STALE_AFTER = timedelta(minutes=30)
+
+
+def import_status(db, script="member_mails"):
+    """How fresh the imported mail is — for the banner on the exchange pages.
+
+    Returns None when nothing has ever run (a fresh install: there is nothing to
+    reassure anyone about yet). Otherwise a dict the template renders as-is:
+    `state` is 'ok', 'stale' or 'error', `label` a ready-made French phrase.
+
+    Why this exists: a member who had just written to a journalist could not tell
+    "not imported yet" from "not recognised" from "broken since Tuesday". And an
+    expired IMAP password left every page looking perfectly normal while nothing
+    arrived any more.
+    """
+    try:
+        row = db.execute(
+            "SELECT started_at, finished_at, status, imported, detail "
+            "FROM import_runs WHERE script = ? "
+            "ORDER BY started_at DESC, id DESC LIMIT 1", (script,)).fetchone()
+    except sqlite3.Error:
+        return None                      # table not created yet
+    if row is None:
+        return None
+
+    started = _parse_iso(row["started_at"])
+    age = datetime.now(timezone.utc) - started if started else None
+
+    if row["status"] == "error":
+        state = "error"
+    elif age is not None and age > IMPORT_STALE_AFTER:
+        state = "stale"
+    else:
+        state = "ok"
+
+    return {
+        "state": state,
+        "when": _humanise_age(age),
+        "imported": row["imported"],
+        "detail": row["detail"],
+        "status": row["status"],
+    }
+
+
+def _parse_iso(value):
+    try:
+        parsed = datetime.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+    # Rows written before the importers stored a timezone read as naive; treat
+    # them as UTC, which is what every script has always written.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _humanise_age(age):
+    """« il y a 4 minutes » — the phrase a human actually reads."""
+    if age is None:
+        return "à une date inconnue"
+    seconds = max(0, int(age.total_seconds()))
+    if seconds < 90:
+        return "à l'instant"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"il y a {minutes} minutes"
+    hours = minutes // 60
+    if hours < 24:
+        return f"il y a {hours} heure{'s' if hours > 1 else ''}"
+    days = hours // 24
+    return f"il y a {days} jour{'s' if days > 1 else ''}"
+
+
+@contextlib.contextmanager
+def _migration_lock():
+    """Let one process at a time run the migrations.
+
+    `init_db()` runs on import, so under gunicorn all four workers reach it at
+    once. That is how the deploy of 44b4311 crash-looped: one worker's
+    `RENAME COLUMN details` landed while another was running `UPDATE … details`,
+    and the second saw a column that no longer existed.
+
+    A file lock rather than a SQLite transaction, because `executescript()`
+    commits any open transaction before it runs — so `BEGIN IMMEDIATE` around
+    this body would simply be dropped. `flock` also costs nothing and is held by
+    the kernel, so a worker that dies mid-migration releases it instead of
+    wedging the next boot.
+
+    The workers that queue behind the lock still run the migrations afterwards;
+    every one of them is guarded (`IF NOT EXISTS`, a `PRAGMA table_info` check),
+    so by then they are no-ops. Serialising is what matters, not skipping.
+
+    Yields True when the lock was taken. If it cannot be (a read-only directory,
+    a platform without flock), it yields False and start-up carries on: a single
+    process is the normal case in development, where there is nothing to race.
+    """
+    lock_path = f"{DB_PATH}.migrate.lock"
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        yield False
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        yield False
+    finally:
+        os.close(fd)
+
+
 def init_db():
-    """Create tables if they don't exist yet, and run lightweight migrations."""
+    """Create tables if they don't exist yet, and run lightweight migrations.
+
+    Runs at import time in every gunicorn worker, hence the lock — see
+    _migration_lock for what happens without it.
+    """
+    with _migration_lock():
+        _init_db_locked()
+
+
+def _init_db_locked():
     db = sqlite3.connect(DB_PATH)
+    # Belt and braces behind the file lock: should two processes ever reach the
+    # database at once anyway, wait for the writer rather than raising
+    # "database is locked" and taking the worker down with it.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.executescript(
         """
         -- Certified users (password holders). Just an identity — name or Discord
@@ -1024,6 +1190,50 @@ def init_db():
             message_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_mail_thread_key ON mail_thread(thread_key);
+
+        -- What each import run did (utils/importruns.py). Written by the
+        -- importers, read here so the interface can state how fresh the data is
+        -- instead of asking people to trust it — and say so when a run fails.
+        -- Declared here too because the app reads it before any import has run.
+        -- Operational metadata only: a script name, timestamps, counts.
+        CREATE TABLE IF NOT EXISTS import_runs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            script      TEXT NOT NULL,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT,
+            status      TEXT NOT NULL,
+            imported    INTEGER NOT NULL DEFAULT 0,
+            inspected   INTEGER NOT NULL DEFAULT 0,
+            detail      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_import_runs_script
+            ON import_runs (script, started_at DESC);
+
+        -- The addresses the mail import could not attach to anyone, and the
+        -- other addresses a person is known by. Canonical definitions live in
+        -- utils/civicrm_lookup.ensure_civicrm_tables() (kept identical);
+        -- declared here because /echanges/a-rattacher reads and writes them,
+        -- and the app may well start before any script has run.
+        --   pending  — waiting for a lookup      absent  — CiviCRM doesn't know it
+        --   resolved — attached to a fiche       ignored — a human said "not a person"
+        CREATE TABLE IF NOT EXISTS civicrm_pending (
+            email       TEXT PRIMARY KEY,
+            display     TEXT,
+            first_seen  TEXT NOT NULL,
+            last_seen   TEXT NOT NULL,
+            seen_count  INTEGER NOT NULL DEFAULT 1,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            resolved_at TEXT,
+            person_id   INTEGER REFERENCES persons(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_civicrm_pending_status
+            ON civicrm_pending(status);
+        CREATE TABLE IF NOT EXISTS person_emails (
+            email      TEXT PRIMARY KEY,
+            person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            source     TEXT,
+            created_at TEXT NOT NULL
+        );
 
         -- Staging tables. Anonymous users (no password) submit drafts here via
         -- the "Déclarer une activité" forms. A certified user reviews them on the
@@ -1544,6 +1754,17 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """Rediriger vers l'icône SVG.
+
+    Les navigateurs qui ne lisent pas `<link rel="icon">` demandent
+    `/favicon.ico` d'eux-mêmes, et prenaient un 404 à chaque page. Pas de
+    `login_required` : l'icône s'affiche aussi sur l'écran de connexion.
+    """
+    return redirect(url_for("static", filename="favicon.svg"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -4529,6 +4750,12 @@ def mails():
         LEFT JOIN mail_persons xp ON xp.mail_id = x.id
         LEFT JOIN persons p       ON p.id = xp.person_id
     """
+    # Une page, pas la table entière : la boîte d'audit contient déjà plus de
+    # 2 000 messages et n'en perdra jamais. On demande un élément de plus que la
+    # page pour savoir s'il existe une suite, sans payer un COUNT(*).
+    page = max(1, request.args.get("page", type=int) or 1)
+    offset = (page - 1) * MAILS_PER_PAGE
+    window = "LIMIT ? OFFSET ?"
     if q:
         like = f"%{q}%"
         rows = db.execute(
@@ -4542,14 +4769,19 @@ def mails():
             )
             GROUP BY x.id
             ORDER BY x.mail_date DESC, x.id DESC
-            """,
-            (like, like, like),
+            """ + window,
+            (like, like, like, MAILS_PER_PAGE + 1, offset),
         ).fetchall()
     else:
         rows = db.execute(
-            base + " GROUP BY x.id ORDER BY x.mail_date DESC, x.id DESC"
+            base + " GROUP BY x.id ORDER BY x.mail_date DESC, x.id DESC " + window,
+            (MAILS_PER_PAGE + 1, offset),
         ).fetchall()
-    return render_template("mails.html", mails=rows, q=q, directions=MAIL_DIRECTIONS)
+    has_next = len(rows) > MAILS_PER_PAGE
+    rows = rows[:MAILS_PER_PAGE]
+    return render_template("mails.html", mails=rows, q=q, page=page,
+                           has_next=has_next, first_index=offset + 1,
+                           directions=MAIL_DIRECTIONS)
 
 
 def _save_mail(db, mail):
@@ -4834,11 +5066,15 @@ def _conversation_groups(db, mails):
     qm = ",".join("?" * len(ids))
     tkey = {r[0]: r[1] for r in db.execute(
         f"SELECT mail_id, thread_key FROM mail_thread WHERE mail_id IN ({qm})", ids)}
-    elus, membs = {}, {}
-    for mid, name in db.execute(
-        f"SELECT xp.mail_id, p.name FROM mail_persons xp JOIN persons p "
-        f"ON p.id = xp.person_id WHERE xp.mail_id IN ({qm})", ids):
+    elus, membs, kinds = {}, {}, {}
+    # The counterpart's own type, so the list can say "Journaliste" where it used
+    # to say "élu·e" for everybody. Since the press CRM was merged in, half of
+    # these conversations are with journalists.
+    for mid, name, ctype in db.execute(
+        f"SELECT xp.mail_id, p.name, p.contact_type FROM mail_persons xp "
+        f"JOIN persons p ON p.id = xp.person_id WHERE xp.mail_id IN ({qm})", ids):
         elus.setdefault(mid, []).append(name)
+        kinds.setdefault(mid, set()).add(ctype)
     for mid, name in db.execute(
         f"SELECT mm.mail_id, COALESCE(m.name, m.email) FROM mail_members mm "
         f"JOIN members m ON m.id = mm.member_id WHERE mm.mail_id IN ({qm})", ids):
@@ -4850,6 +5086,7 @@ def _conversation_groups(db, mails):
         g = groups.get(key)
         if g is None:
             g = {"key": key, "count": 0, "last_date": m["mail_date"],
+                 "kinds": set(),
                  # The Objet is the mail's real subject line. Older rows and
                  # anything imported before the column existed have none, so
                  # they keep falling back to the body.
@@ -4863,15 +5100,23 @@ def _conversation_groups(db, mails):
             g["last_date"] = m["mail_date"]
             g["subject"] = m["subject"] or m["summary"]
         g["elus"].update(elus.get(m["id"], []))
+        g["kinds"].update(kinds.get(m["id"], set()))
         g["members"].update(membs.get(m["id"], []))
         g["directions"].add(m["direction"])
         if m["document_stored_name"]:
             g["has_doc"] = True
     convs = [groups[k] for k in order]
     for g in convs:
+        # Two independent questions, and the list used to answer only the first:
+        # who wrote (a member, an anonymous citizen) and who was written to (an
+        # élu·e, a journalist). A press exchange showed up as plain "Membre".
         g["type"] = ("membre" if g["members"]
                      else "citoyen" if g["subject"].startswith("Mail d'un citoyen")
                      else "autre")
+        # "" quand on ne sait pas, "plusieurs" quand le fil mêle des types :
+        # une valeur vide plutôt qu'un caractère d'affichage stocké comme donnée.
+        g["kind"] = (g["kinds"].copy().pop() if len(g["kinds"]) == 1
+                     else ("plusieurs" if g["kinds"] else ""))
     return convs
 
 
@@ -4881,19 +5126,54 @@ def exchanges():
     db = get_db()
     q = (request.args.get("q") or "").strip()
     typ = request.args.get("type") or ""
+    # Les fils se regroupent en Python, donc on ne peut pas paginer par
+    # conversation sans couper un fil en deux. On borne plutôt la fenêtre lue :
+    # les N courriels les plus récents, N doublable depuis la page. Sans borne,
+    # cette requête lisait la table entière à chaque affichage — imperceptible à
+    # 2 000 messages, intenable à 30 000.
+    window = min(request.args.get("fenetre", type=int) or EXCHANGES_WINDOW,
+                 EXCHANGES_WINDOW_MAX)
     mails = db.execute(
         "SELECT id, mail_date, direction, subject, summary, document_stored_name "
-        "FROM mails ORDER BY mail_date DESC, id DESC"
+        "FROM mails ORDER BY mail_date DESC, id DESC LIMIT ?", (window + 1,)
     ).fetchall()
+    truncated = len(mails) > window
+    mails = mails[:window]
+    kind = request.args.get("kind") or ""
+    # "Je suis…" — whose exchanges to show. Remembered in a cookie because the
+    # application has no per-user login (one shared password), so this is a
+    # convenience, NOT a permission: everything stays visible to everyone, and
+    # the interface must not pretend otherwise.
+    me = request.args.get("me")
+    if me is None:
+        me = request.cookies.get("crm_me") or ""
     convs = _conversation_groups(db, mails)
     if typ in ("membre", "citoyen", "autre"):
         convs = [c for c in convs if c["type"] == typ]
+    if kind:
+        convs = [c for c in convs if kind in c["kinds"]]
+    members_list = db.execute(
+        "SELECT id, COALESCE(name, email) AS name FROM members "
+        "ORDER BY name COLLATE NOCASE").fetchall()
+    me_name = next((m["name"] for m in members_list if str(m["id"]) == me), None)
+    if me_name:
+        convs = [c for c in convs if me_name in c["members"]]
     if q:
         ql = q.lower()
         convs = [c for c in convs if ql in c["subject"].lower()
                  or any(ql in n.lower() for n in c["elus"] | c["members"])]
-    return render_template("exchanges.html", conversations=convs, q=q, typ=typ,
-                           directions=MAIL_DIRECTIONS)
+    response = make_response(render_template(
+        "exchanges.html", conversations=convs, q=q, typ=typ, kind=kind,
+        contact_types=CONTACT_TYPES, members_list=members_list, me=me,
+        me_name=me_name, truncated=truncated, window=window,
+        next_window=min(window * 2, EXCHANGES_WINDOW_MAX),
+        directions=MAIL_DIRECTIONS))
+    if request.args.get("me") is not None:
+        # A year, and no personal data in it: a members.id this browser chose.
+        response.set_cookie("crm_me", me, max_age=31536000, samesite="Lax",
+                            httponly=True,
+                            secure=bool(os.environ.get("PRODUCTION")))
+    return response
 
 
 @app.route("/echanges/fil")
@@ -4920,6 +5200,214 @@ def conversation(key=None):
         abort(404)
     return render_template("conversation.html", mails=mails,
                            directions=MAIL_DIRECTIONS)
+
+
+# --------------------------------------------------------------------------- #
+# Échanges à rattacher: the queue, out of the CLI and into the interface
+# --------------------------------------------------------------------------- #
+
+UNLINKED_STATUSES = ("pending", "absent")
+
+
+# --------------------------------------------------------------------------- #
+# Déposer un courriel à la main
+# --------------------------------------------------------------------------- #
+
+def _member_importer():
+    """Le module d'import, ou None s'il n'est pas dans le conteneur.
+
+    `utils/` n'est PAS copié par le Dockerfile : il est injecté à l'exécution
+    par `docker cp`. Une page qui l'importe au chargement du module ferait donc
+    planter l'application entière sur une image fraîche. L'import est donc tardif
+    et son échec est une information affichée à l'écran, pas une erreur 500.
+    """
+    utils = str(BASE_DIR / "utils")
+    if utils not in sys.path:
+        sys.path.insert(0, utils)
+    try:
+        import import_member_mails                  # noqa: PLC0415
+        return import_member_mails
+    except ImportError:
+        return None
+
+
+# Un courriel avec ses pièces jointes tient largement dedans, et ça borne ce
+# qu'un dépôt peut coûter en mémoire. MAX_CONTENT_LENGTH borne déjà la requête.
+MAX_EML_BYTES = 8 * 1024 * 1024
+ALLOWED_EML_SUFFIXES = (".eml", ".msg", ".txt")
+
+
+@app.route("/echanges/deposer", methods=["GET", "POST"])
+@login_required
+def deposit():
+    """Déposer un ou plusieurs fichiers .eml, traités comme l'import automatique.
+
+    La capture automatique ne retient que ce que l'association a une raison de
+    suivre (voir maildomains.in_scope), ce qui laisse dehors un cas courant : le
+    journaliste qui écrit depuis son gmail. Ici, quelqu'un choisit délibérément
+    de confier un échange au CRM — c'est le consentement qui manque à la
+    capture — donc le périmètre restrictif ne s'applique pas.
+
+    Publication directe, sans passer par la modération : la personne qui dépose
+    son propre échange sait ce qu'elle dépose.
+    """
+    importer = _member_importer()
+    if request.method == "GET":
+        return render_template("deposit.html", importer=bool(importer))
+
+    if importer is None:
+        flash("Le module d'import n'est pas présent dans le conteneur "
+              "(utils/ n'est pas copié par l'image). Dépôt impossible.", "error")
+        return redirect(url_for("deposit"))
+
+    files = [f for f in request.files.getlist("courriels") if f and f.filename]
+    if not files:
+        flash("Aucun fichier reçu.", "error")
+        return redirect(url_for("deposit"))
+
+    db = get_db()
+    results, counts = [], {"imported": 0, "queued": 0,
+                           "duplicate": 0, "unmatched": 0, "rejected": 0}
+    for storage in files:
+        name = storage.filename
+        if not name.lower().endswith(ALLOWED_EML_SUFFIXES):
+            results.append((name, "rejected", "ce n'est pas un fichier .eml"))
+            counts["rejected"] += 1
+            continue
+        raw = storage.read(MAX_EML_BYTES + 1)
+        if len(raw) > MAX_EML_BYTES:
+            results.append((name, "rejected", "fichier trop volumineux"))
+            counts["rejected"] += 1
+            continue
+        try:
+            msg = email.message_from_bytes(raw)
+            state, subject = importer.handle_one_message(db, msg)
+        except Exception as exc:                     # noqa: BLE001
+            # Un .eml mal formé ne doit pas emporter les autres fichiers du même
+            # dépôt, ni rendre une erreur 500 à quelqu'un qui a juste glissé le
+            # mauvais fichier.
+            app.logger.exception("dépôt de courriel : %s", name)
+            results.append((name, "rejected", f"illisible ({type(exc).__name__})"))
+            counts["rejected"] += 1
+            continue
+        results.append((name, state, subject))
+        counts[state] += 1
+
+    db.commit()
+    session["deposit_results"] = results
+    flash(_deposit_summary(counts), "success" if counts["imported"] else "error")
+    return redirect(url_for("deposit"))
+
+
+def _deposit_summary(counts):
+    parts = []
+    if counts["imported"]:
+        parts.append(f"{counts['imported']} courriel(s) enregistré(s)")
+    if counts["queued"]:
+        parts.append(f"{counts['queued']} adresse(s) mise(s) en file « à "
+                     f"rattacher »")
+    if counts["duplicate"]:
+        parts.append(f"{counts['duplicate']} déjà connu(s)")
+    if counts["unmatched"]:
+        parts.append(f"{counts['unmatched']} sans membre PauseIA identifiable")
+    if counts["rejected"]:
+        parts.append(f"{counts['rejected']} refusé(s)")
+    return ", ".join(parts) + "." if parts else "Rien à traiter."
+
+
+@app.route("/echanges/a-rattacher")
+@login_required
+def unlinked():
+    """Addresses the import saw but could not attach to anybody.
+
+    This queue already existed — `civicrm_pending`, filled by the member import
+    and emptied by the CiviCRM sync — but only a script could read it. So the one
+    place holding the answer to "why isn't my exchange here?" was a command line.
+    A member who cannot find their exchange now sees it waiting, and can say who
+    it is without anyone touching the server.
+    """
+    db = get_db()
+    try:
+        rows = db.execute(
+            """
+            SELECT email, display, first_seen, last_seen, seen_count, status
+              FROM civicrm_pending
+             WHERE status IN (?, ?)
+             ORDER BY seen_count DESC, last_seen DESC
+            """, UNLINKED_STATUSES).fetchall()
+    except sqlite3.Error:
+        rows = []                      # queue not created yet: nothing to show
+    people = db.execute(
+        "SELECT id, name, contact_type FROM persons ORDER BY name COLLATE NOCASE"
+    ).fetchall()
+    return render_template("unlinked.html", rows=rows, people=people)
+
+
+@app.route("/echanges/a-rattacher/lier", methods=["POST"])
+@login_required
+def unlinked_link():
+    """Say whose address this is. The mails follow on the next sweep.
+
+    Recording it in `person_emails` rather than overwriting `persons.email` is
+    deliberate: someone writes from several addresses, and the one they happened
+    to use here is not necessarily their main one. This is exactly what the
+    import already learns by itself from a mail thread — done by hand.
+    """
+    db = get_db()
+    address = (request.form.get("email") or "").strip().lower()
+    person_id = request.form.get("person_id") or ""
+    if not address or not person_id.isdigit():
+        flash("Indiquez l'adresse et la personne à qui la rattacher.", "error")
+        return redirect(url_for("unlinked"))
+    person = db.execute(
+        "SELECT name FROM persons WHERE id = ?", (int(person_id),)).fetchone()
+    if person is None:
+        abort(404)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    db.execute(
+        "INSERT OR IGNORE INTO person_emails (email, person_id, source, created_at)"
+        " VALUES (?, ?, 'interface', ?)", (address, int(person_id), now))
+    db.execute(
+        "UPDATE civicrm_pending SET status = 'resolved', resolved_at = ?, "
+        "person_id = ? WHERE email = ?", (now, int(person_id), address))
+    db.commit()
+    flash(f"{address} rattachée à {person['name']}. Les courriels concernés "
+          f"seront rattachés au prochain import (moins de 10 minutes).", "success")
+    return redirect(url_for("unlinked"))
+
+
+@app.route("/echanges/a-rattacher/ignorer", methods=["POST"])
+@login_required
+def unlinked_ignore():
+    """Not a person we follow — a robot, a supplier, a personal mail.
+
+    'ignored' is a fourth status the scripts never set and never revisit, so the
+    queue stays a list of real questions instead of growing into noise nobody
+    reads. Reversible: « Réexaminer » puts it back.
+    """
+    db = get_db()
+    address = (request.form.get("email") or "").strip().lower()
+    target = "pending" if request.form.get("undo") else "ignored"
+    db.execute("UPDATE civicrm_pending SET status = ? WHERE email = ?",
+               (target, address))
+    db.commit()
+    flash(f"{address} : {'remise en file' if target == 'pending' else 'ignorée'}.",
+          "success")
+    return redirect(url_for("unlinked", ignorees=1 if target == "ignored" else None))
+
+
+@app.route("/echanges/a-rattacher/ignorees")
+@login_required
+def unlinked_ignored():
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT email, display, first_seen, last_seen, seen_count, status "
+            "FROM civicrm_pending WHERE status = 'ignored' "
+            "ORDER BY seen_count DESC, last_seen DESC").fetchall()
+    except sqlite3.Error:
+        rows = []
+    return render_template("unlinked.html", rows=rows, people=[], ignored=True)
 
 
 @app.route("/mails/uploads/<int:mail_id>")

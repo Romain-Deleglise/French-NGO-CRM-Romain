@@ -157,6 +157,9 @@ def reconcile_in_office():
         current |= reader()
 
     db = sqlite3.connect(DB)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     try:
         rows = db.execute(
             "SELECT id, name, role, in_office FROM persons "

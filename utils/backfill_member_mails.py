@@ -48,6 +48,9 @@ def main():
     args = ap.parse_args()
 
     db = sqlite3.connect(args.db)
+    # The app writes to this same file. Wait for it rather than failing
+    # with "database is locked" on the first contention.
+    db.execute("PRAGMA busy_timeout = 30000")
     db.row_factory = sqlite3.Row
     ensure_member_tables(db)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")

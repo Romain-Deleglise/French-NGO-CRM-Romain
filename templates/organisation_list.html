@@ -47,13 +47,13 @@
       <tr onclick="window.location='{{ url_for('organisation_detail', organisation_id=o['id']) }}'">
         <td><strong>{{ o['name'] }}</strong></td>
         <td class="nowrap">{{ ui.org_tag(o['org_type']) }}</td>
-        <td>{{ o['media_type'] or o['chambre'] or o['religion'] or '—' }}</td>
-        <td>{{ o['orientation'] or '—' }}</td>
+        <td>{{ o['media_type'] or o['chambre'] or o['religion'] or '' }}</td>
+        <td>{{ o['orientation'] or '' }}</td>
         <td>{{ o['stance'] }}</td>
         <td class="nowrap">{{ o['person_count'] }}</td>
         <td class="nowrap">{{ o['intervention_count'] }}</td>
         <td class="nowrap">{{ o['content_count'] }}</td>
-        <td class="nowrap">{% if o['link'] | safe_link %}<a href="{{ o['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% else %}—{% endif %}</td>
+        <td class="nowrap">{% if o['link'] | safe_link %}<a href="{{ o['link'] }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ Ouvrir</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
