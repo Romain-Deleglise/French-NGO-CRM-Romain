@@ -914,3 +914,18 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
 .split-org input[type="number"]::-webkit-outer-spin-button,
 .split-typehead input[type="number"]::-webkit-inner-spin-button,
 .split-typehead input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Freshness of the mail import, on the pages built from it. Three states, and
+   the two that matter are impossible to miss: a silent pipeline used to look
+   exactly like a quiet week. */
+.import-status {
+  margin: 0 0 1rem;
+  padding: .55rem .8rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: .92rem;
+}
+.import-status .muted { display: block; margin-top: .25rem; font-size: .85rem; }
+.import-ok    { background: #f1f8f2; border-color: #cfe6d4; color: #2f5d3a; }
+.import-stale { background: #fff8e6; border-color: #f0dca8; color: #7a5b12; }
+.import-error { background: #fdf0f0; border-color: #f0c2c2; color: #8a2b2b; }

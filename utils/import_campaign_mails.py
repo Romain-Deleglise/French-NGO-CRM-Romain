@@ -71,6 +71,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import maildomains  # noqa: E402
+import importruns  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.path.join(ROOT, "meetings.db")
@@ -593,6 +594,10 @@ def main():
         return
 
     conn = connect_imap()
+    tracker = importruns.track(db, "campaign_mails", enabled=not args.dry_run)
+    run = tracker.__enter__()
+    failure = None
+
     try:
         last_uid = get_last_uid(db, mailbox)
         uids = fetch_uids(conn, mailbox, last_uid, args.backfill)
@@ -617,10 +622,18 @@ def main():
             db.commit()
 
         verb = "published" if auto_publish else "staged"
+        run.imported, run.inspected = imported, len(uids)
+        run.detail = (f"{imported} courriel(s) intégré(s), {skipped_dup} déjà "
+                      f"connu(s), {unmatched} sans correspondance.")
         log(f"Done. Mails {verb}: {imported} | already-imported skipped: "
             f"{skipped_dup} | no match: {unmatched} | last UID now: "
             f"{max_uid if not args.dry_run else last_uid}.")
+    except BaseException as exc:             # noqa: BLE001 — recorded, re-raised
+        failure = exc
+        run.detail = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
+        tracker.__exit__(type(failure) if failure else None, failure, None)
         try:
             conn.logout()
         except Exception:

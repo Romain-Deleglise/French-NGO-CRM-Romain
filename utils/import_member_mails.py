@@ -55,6 +55,7 @@ from import_campaign_mails import (  # noqa: E402
 # The set of domains belonging to organisations we follow — read from the data
 # rather than hard-coded, so journalists' médias count too. See maildomains.py.
 import maildomains  # noqa: E402
+import importruns  # noqa: E402
 # CiviCRM holds ~12 900 journalists this CRM does not. An address we cannot match
 # is queued here rather than dropped, and civicrm_lookup.py turns it into a fiche.
 from civicrm_lookup import enqueue, ensure_civicrm_tables, is_bulk  # noqa: E402
@@ -612,6 +613,13 @@ def main():
     log(f"Loaded {len(email_index)} élu·e e-mail(s) from {db_path}. "
         f"Output: {'auto-publish' if auto_publish else 'moderation queue'}.")
 
+    # One row per run, so /echanges can say how fresh the data is — and say so
+    # loudly when a run fails. Started before connect_imap(): an expired
+    # password is exactly the failure that must leave a trace.
+    tracker = importruns.track(db, "member_mails", enabled=not args.dry_run)
+    run = tracker.__enter__()
+    failure = None
+
     conn = connect_imap()
     try:
         last_uid = get_last_uid(db, "members")
@@ -651,10 +659,20 @@ def main():
             set_last_uid(db, "members", max_uid)
             db.commit()
         verb = "published" if auto_publish else "staged"
+        run.imported, run.inspected = imported, len(uids)
+        run.detail = (f"{imported} courriel(s) intégré(s), {dup} déjà connu(s), "
+                      f"{skipped} hors périmètre, {queued} adresse(s) en file.")
         log(f"Done. Mails {verb}: {imported} | already-imported skipped: {dup} | "
             f"not member↔élu: {skipped} | queued for CiviCRM: {queued} | "
             f"last UID now: {max_uid if not args.dry_run else last_uid}.")
+    except BaseException as exc:             # noqa: BLE001 — recorded, re-raised
+        # Including KeyboardInterrupt: a run cut short did not finish its sweep,
+        # and the interface must not present it as a healthy one.
+        failure = exc
+        run.detail = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
+        tracker.__exit__(type(failure) if failure else None, failure, None)
         try:
             conn.logout()
         except Exception:

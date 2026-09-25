@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import import_banner %}
 {% block title %}Suivi des échanges{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -10,6 +11,8 @@
   <a class="subtab" href="{{ url_for('members') }}">Membres</a>
   <a class="subtab" href="{{ url_for('mails') }}">Tous les courriels</a>
 </nav>
+
+{{ import_banner(import_state) }}
 
 <form class="search" method="get" action="{{ url_for('exchanges') }}">
   <input type="search" name="q" value="{{ q }}"

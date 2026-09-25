@@ -33,6 +33,12 @@ gardés par un test de présence de colonne.
 - **`organisations`** : `ORG_TYPES` = `Média`, `Groupe politique`, `Culte`, `ONG`,
   `Entreprise`, `Autre`. Correspondance type de contact ↔ type d'orga dans
   `ORG_TYPE_BY_CONTACT_TYPE` (`app.py`).
+- **`import_runs`** : une ligne par exécution d'un importeur (script, début, fin,
+  statut, nombre de courriels). Écrite par `utils/importruns.py`, lue par
+  `import_status()` pour le bandeau de fraîcheur des pages d'échanges. C'est ce
+  qui rend visible un import en panne : sans elle, un mot de passe IMAP expiré
+  laissait l'interface parfaitement normale pendant que plus rien n'arrivait.
+  Métadonnées d'exploitation uniquement — aucune adresse, aucun nom.
 - **`meetings`** / `mails` (+ `mail_persons`, `mail_members`, `mail_bodies`,
   `mail_thread`), **`members`** (membres @pauseia.fr, auto-créés par l'import),
   **`interventions`** / `contents` (médiatiques), **`pending_*`** (file de
@@ -55,6 +61,11 @@ Interventions · Contenus · Modération · Utilisateurices.
 - **Suivi des échanges** (`/echanges`) : vue unifiée type boîte mail (citoyens +
   membres + élu·es), fils regroupés, sous-onglets *Échanges · Membres · Tous les
   courriels*. Détail d'un fil = `conversation.html` (cartes expéditeur→destinataires).
+  Les trois pages portent un **bandeau de fraîcheur** (macro `import_banner`) :
+  « Dernière synchronisation il y a 4 minutes » en vert, l'avertissement en
+  orange au-delà de 30 min (trois créneaux manqués), en rouge si le dernier
+  import a échoué. Répond à « mon échange est-il enregistré, ou faut-il
+  attendre ? » sans demander de faire confiance.
 - Les listes filtrent par `contact_type` ; badge « Non élu·e actuellement » quand
   `in_office = 0`.
 

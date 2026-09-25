@@ -31,7 +31,7 @@ import time
 import unicodedata
 import uuid
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -806,6 +806,92 @@ def inject_pending_count():
     return {"pending_count": total}
 
 
+@app.context_processor
+def inject_import_state():
+    """Expose the freshness of the mail import to the templates that show it.
+
+    A context processor rather than three route arguments: the banner belongs on
+    every page built from the import, and the query is one indexed row. Skipped
+    for anonymous visitors, who see the public declaration forms only.
+    """
+    if not session.get("authenticated"):
+        return {"import_state": None}
+    return {"import_state": import_status(get_db())}
+
+
+# The member import runs every 10 minutes. Beyond this, three runs in a row have
+# failed to happen and the interface should say so rather than look normal.
+IMPORT_STALE_AFTER = timedelta(minutes=30)
+
+
+def import_status(db, script="member_mails"):
+    """How fresh the imported mail is — for the banner on the exchange pages.
+
+    Returns None when nothing has ever run (a fresh install: there is nothing to
+    reassure anyone about yet). Otherwise a dict the template renders as-is:
+    `state` is 'ok', 'stale' or 'error', `label` a ready-made French phrase.
+
+    Why this exists: a member who had just written to a journalist could not tell
+    "not imported yet" from "not recognised" from "broken since Tuesday". And an
+    expired IMAP password left every page looking perfectly normal while nothing
+    arrived any more.
+    """
+    try:
+        row = db.execute(
+            "SELECT started_at, finished_at, status, imported, detail "
+            "FROM import_runs WHERE script = ? "
+            "ORDER BY started_at DESC, id DESC LIMIT 1", (script,)).fetchone()
+    except sqlite3.Error:
+        return None                      # table not created yet
+    if row is None:
+        return None
+
+    started = _parse_iso(row["started_at"])
+    age = datetime.now(timezone.utc) - started if started else None
+
+    if row["status"] == "error":
+        state = "error"
+    elif age is not None and age > IMPORT_STALE_AFTER:
+        state = "stale"
+    else:
+        state = "ok"
+
+    return {
+        "state": state,
+        "when": _humanise_age(age),
+        "imported": row["imported"],
+        "detail": row["detail"],
+        "status": row["status"],
+    }
+
+
+def _parse_iso(value):
+    try:
+        parsed = datetime.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+    # Rows written before the importers stored a timezone read as naive; treat
+    # them as UTC, which is what every script has always written.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _humanise_age(age):
+    """« il y a 4 minutes » — the phrase a human actually reads."""
+    if age is None:
+        return "à une date inconnue"
+    seconds = max(0, int(age.total_seconds()))
+    if seconds < 90:
+        return "à l'instant"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"il y a {minutes} minutes"
+    hours = minutes // 60
+    if hours < 24:
+        return f"il y a {hours} heure{'s' if hours > 1 else ''}"
+    days = hours // 24
+    return f"il y a {days} jour{'s' if days > 1 else ''}"
+
+
 @contextlib.contextmanager
 def _migration_lock():
     """Let one process at a time run the migrations.
@@ -1088,6 +1174,24 @@ def _init_db_locked():
             message_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_mail_thread_key ON mail_thread(thread_key);
+
+        -- What each import run did (utils/importruns.py). Written by the
+        -- importers, read here so the interface can state how fresh the data is
+        -- instead of asking people to trust it — and say so when a run fails.
+        -- Declared here too because the app reads it before any import has run.
+        -- Operational metadata only: a script name, timestamps, counts.
+        CREATE TABLE IF NOT EXISTS import_runs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            script      TEXT NOT NULL,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT,
+            status      TEXT NOT NULL,
+            imported    INTEGER NOT NULL DEFAULT 0,
+            inspected   INTEGER NOT NULL DEFAULT 0,
+            detail      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_import_runs_script
+            ON import_runs (script, started_at DESC);
 
         -- Staging tables. Anonymous users (no password) submit drafts here via
         -- the "Déclarer une activité" forms. A certified user reviews them on the
