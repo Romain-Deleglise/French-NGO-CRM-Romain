@@ -32,7 +32,7 @@ Membre @pauseia.fr  ⇄  élu·e (mail entrant OU sortant)
         │  règle de contenu Gmail (Cci invisible, périmètre @pauseia.fr)
         ▼
 suivi-membres@pauseia.fr (boîte d'audit lue en IMAP)
-        │  import_member_mails.py (timer 06:10)
+        │  import_member_mails.py (timer toutes les 10 min)
         ▼
 CRM : mails + mail_persons (élu·e) + mail_members (membre) + corps
 ```
@@ -93,9 +93,9 @@ sans alourdir le menu du haut. Les fiches membre et les fiches **Personnes**
 **vue boîte mail** : chaque message en carte (expéditeur → destinataires, objet,
 corps), anciens messages repliés, le dernier ouvert.
 
-## 6. Fonctionnement quotidien (automatique)
+## 6. Fonctionnement en continu (automatique)
 
-Un **timer systemd** se déclenche **chaque jour à 06:10 UTC** et, dans le
+Un **timer systemd** se déclenche **toutes les 10 minutes** et, dans le
 conteneur, lit la boîte d'audit (uniquement les UID IMAP plus récents que le
 dernier traité), classe, matche, et **publie** (mode auto-publish). Les cas de
 faible confiance (motif de nom) partent en **modération**.
@@ -155,7 +155,7 @@ Pour les 4 chambres :
 | **`utils/sync_officials.py`** | Orchestrateur des **4 chambres** (AN, Sénat, gouvernement, eurodéputés) : fetch + extract + insert, chambres isolées, + réconciliation `in_office`. |
 | **`utils/extract_eurodeputes.py` / `insert_eurodeputes.py`** | Récupère (cache anti-429) et upsert les eurodéputé·es ; appelés par `sync_officials.py`. |
 | **`app.py` + templates** | Sous-onglet **Membres** dans **Suivi des échanges**, vue **boîte mail** des conversations, badge **« Non élu·e actuellement »** (`persons.in_office`) ; tables `members`, `mail_members`, `mail_bodies`, `mail_thread`. |
-| **`utils/deploy/import-member-mails.{service,timer}`** | Timer quotidien 06:10 (mails de membres). |
+| **`utils/deploy/import-member-mails.{service,timer}`** | Timer toutes les 10 min (mails de membres). |
 | **`utils/deploy/sync-officials.{service,timer}`** | Timer hebdo lundi 05:30 (les 4 chambres + réconciliation `in_office`). |
 
 ## 9. Déploiement / exploitation

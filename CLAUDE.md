@@ -130,7 +130,11 @@ parlementaires restent un plancher.
 - `sync-officials` (lun. 05:30, les 4 chambres + `in_office`) — remplace l'ancien
   `sync-eurodeputes` (désactivé).
 - `import-campaign-mails` (06:00, sync emails + import citoyens).
-- `import-member-mails` (06:10).
+- `import-member-mails` (**toutes les 10 min**, `OnUnitActiveSec=10min`) — la
+  capture Workspace est instantanée, seul cet import faisait attendre ; sans
+  `--backfill` il ne lit que les UID nouveaux, donc un passage à vide ne coûte
+  rien. Le service ne recopie `utils/` que si elle manque (sinon il effacerait
+  ce répertoire sous les pieds de `civicrm-sync`).
 - `civicrm-sync` (06:30) — **après** l'import des mails de membres, qui est
   précisément ce qui remplit la file que cette synchro vide.
 

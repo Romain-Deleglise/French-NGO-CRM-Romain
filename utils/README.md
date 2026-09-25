@@ -207,7 +207,7 @@ python3 utils/import_member_mails.py --backfill --auto-publish         # first p
 python3 utils/import_member_mails.py                                   # daily incremental
 ```
 
-**Daily run:** install `deploy/import-member-mails.{service,timer}` (06:10) the
+**Every 10 minutes:** install `deploy/import-member-mails.{service,timer}` the
 same way as the campaign unit:
 ```bash
 sudo cp utils/deploy/import-member-mails.service /etc/systemd/system/
