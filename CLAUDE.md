@@ -37,7 +37,8 @@ gardés par un test de présence de colonne.
   `mail_thread`), **`members`** (membres @pauseia.fr, auto-créés par l'import),
   **`interventions`** / `contents` (médiatiques), **`pending_*`** (file de
   modération), `moderators` (les « Utilisateurices »).
-- **Pont CiviCRM** : `civicrm_pending` (file des adresses à identifier :
+- **Pont CiviCRM** : `mail_conventions` (conventions d'adresses apprises sur CiviCRM),
+  `civicrm_pending` (file des adresses à identifier :
   `pending` / `resolved` / `absent`) et `person_emails` (autres adresses d'une
   personne, apprises par fil de discussion ou par CiviCRM — c'est la table que
   le rapprochement des mails consulte).
@@ -100,6 +101,13 @@ qui personne n'a jamais écrit.
 - **Conventions d'adresses** : `mailpatterns.py` apprend sur les adresses réelles
   comment chaque rédaction construit les siennes (Le Figaro = `<initiale><nom>`),
   pour **reconnaître** une adresse jamais vue. Jamais pour en fabriquer une.
+  `learn_conventions.py` (étape `1b/5`) fait cet apprentissage sur les **12 900
+  journalistes de CiviCRM** et non sur nos seules fiches, et range le résultat
+  dans `mail_conventions` (domaine, média, gabarit, nombre d'exemples — aucune
+  adresse, aucun nom, aucune fiche créée). C'est ce qui rend reconnaissable une
+  adresse chez une rédaction dont on ne tient qu'une fiche (`nouvelobs.com`,
+  `francetv.fr`) : `maildomains` compte le domaine comme connu et
+  `civicrm_lookup --apply-names` peut y rattacher un nom.
 
 Trois règles non négociables : **APIv4 uniquement, jamais MySQL** (le schéma
 bouge entre versions majeures, l'API non) ; **`cv` en local, pas REST** (aucune
@@ -227,5 +235,5 @@ sudo docker exec website-meeting-app python3 /app/utils/<script>.py [--commit]
 | Le pont CiviCRM (règles, correspondances, pièges) | `AUTOMATISATION_CIVICRM.md` |
 | Ce que CiviCRM renvoie et comment on le mappe | `utils/civicrm.py` |
 | La file d'attente et la création des fiches | `utils/civicrm_lookup.py` |
-| Les domaines connus, les conventions d'adresses | `utils/maildomains.py`, `utils/mailpatterns.py` |
+| Les domaines connus, les conventions d'adresses | `utils/maildomains.py`, `utils/mailpatterns.py`, `utils/learn_conventions.py` |
 | Timers / unités systemd | `utils/deploy/` |

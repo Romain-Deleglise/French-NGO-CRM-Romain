@@ -72,12 +72,33 @@ docker cp "$WORK/civi-medias.json" "$CRM_CONTAINER:/tmp/civi-medias.json"
 docker exec "$CRM_CONTAINER" python3 /app/utils/import_civicrm_medias.py \
   --file /tmp/civi-medias.json $COMMIT
 
-# --------------------------------------------------------------------------- #
 if [ -n "$MEDIAS_ONLY" ]; then
   say "Médias seulement — terminé."
   exit 0
 fi
 
+# --------------------------------------------------------------------------- #
+say "1b/5  Learning every média's address convention from CiviCRM"
+# All the journalists CiviCRM holds an address for — ~12 900, not just the press
+# groups: a convention is a fact about a newsroom, and the more addresses back it
+# the safer it is. Three fields only, and the file never leaves this machine: the
+# script keeps a domain, a média and a template, then throws the addresses away.
+# No fiche is created here.
+#
+# This is what makes a newsroom we hold one fiche for — nouvelobs.com,
+# francetv.fr — recognisable all the same.
+civi Contact.get \
+  "{\"select\":[\"display_name\",\"email_primary.email\",\"employer_id.display_name\"],\"where\":[[\"contact_sub_type\",\"CONTAINS\",\"Journaliste\"],[\"email_primary.email\",\"IS NOT EMPTY\",true],[\"is_deleted\",\"=\",false]],\"limit\":0}" \
+  > "$WORK/civi-journalists.json"
+echo "   $(grep -c '\"display_name\"' "$WORK/civi-journalists.json" || true) journaliste(s) avec adresse"
+
+docker cp "$WORK/civi-journalists.json" "$CRM_CONTAINER:/tmp/civi-journalists.json"
+docker exec "$CRM_CONTAINER" python3 /app/utils/learn_conventions.py \
+  --file /tmp/civi-journalists.json $COMMIT
+# The export carries every journalist's address; it has served its purpose.
+docker exec "$CRM_CONTAINER" rm -f /tmp/civi-journalists.json
+
+# --------------------------------------------------------------------------- #
 say "2/5  Addresses awaiting a lookup"
 docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py --list-pending \
   > "$WORK/pending.txt"
@@ -128,7 +149,6 @@ docker cp "$WORK/civi-emails.json" "$CRM_CONTAINER:/tmp/civi-emails.json"
 docker exec "$CRM_CONTAINER" python3 /app/utils/civicrm_lookup.py \
   --apply /tmp/civi-contacts.json --emails /tmp/civi-emails.json $COMMIT
 
-# --------------------------------------------------------------------------- #
 # --------------------------------------------------------------------------- #
 say "4b/5  Addresses left over: try each média's own convention"
 # Seeding gave us real addresses per média, and a newsroom follows one

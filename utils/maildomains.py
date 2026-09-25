@@ -116,7 +116,29 @@ def collect(db, min_persons=MIN_PERSONS_PER_DOMAIN):
         pass
 
     found = {d for d, people in counts.items() if len(people) >= min_persons}
-    return frozenset(found | set(SEED_DOMAINS))
+    return frozenset(found | set(SEED_DOMAINS) | learned_domains(db))
+
+
+def learned_domains(db):
+    """Domains evidenced by CiviCRM's journalists (`mail_conventions`).
+
+    Written by `learn_conventions.py`, which reads all ~12 900 CiviCRM
+    journalists and keeps only what it deduces: a domain, its média, how it
+    builds local parts. That is how `nouvelobs.com` or `francetv.fr` count as
+    known here even when this CRM holds a single fiche on them — the two-person
+    rule above is about *our* fiches, and CiviCRM is better evidence than our
+    fiche count. The table is queried directly rather than through
+    `learn_conventions`, which imports this module.
+
+    Freemail is filtered again: a row could only get there through a
+    misconfigured `--min-examples`, but the rule matters more than the table.
+    """
+    try:
+        rows = db.execute("SELECT domain FROM mail_conventions")
+    except sqlite3.Error:
+        return set()          # table absent: nothing learned yet
+    return {d.strip().lower() for (d,) in rows
+            if d and d.strip().lower() not in FREEMAIL_DOMAINS}
 
 
 def refresh(db, min_persons=MIN_PERSONS_PER_DOMAIN):

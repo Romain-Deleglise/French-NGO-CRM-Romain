@@ -43,6 +43,7 @@ from civicrm import (  # noqa: E402
 )
 from import_civicrm_medias import link_person_media, load_media_index  # noqa: E402
 import mailpatterns  # noqa: E402
+import learn_conventions  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.environ.get("IMAP_DB_PATH", os.path.join(ROOT, "meetings.db"))
@@ -439,11 +440,19 @@ def cmd_seed(db, args):
 def domain_conventions(db):
     """{domain: {"media": name, "template": how addresses are built there}}.
 
-    Learned from the fiches we already hold — the seeded national group is what
-    makes this worth anything. A domain appears only when its convention is
-    unambiguous AND we know which média it belongs to, since resolving needs
-    both: the template to rebuild an address, the média to know whose names to
-    compare it against.
+    Two sources, in this order of trust:
+
+    1. `mail_conventions`, learned by `learn_conventions.py` from *all* of
+       CiviCRM's journalists — hundreds of médias, each convention backed by
+       dozens of addresses. This is what makes `cbouchouchi@nouvelobs.com` or
+       `emmanuel.pall@francetv.fr` recognisable: those newsrooms have one fiche
+       here, far too few to deduce anything from, but hundreds in CiviCRM.
+    2. The fiches we hold ourselves, which fill the gaps — a média CiviCRM has
+       nothing on, or a domain we learned from a mail thread.
+
+    A domain appears only when its convention is unambiguous AND we know which
+    média it belongs to, since resolving needs both: the template to rebuild an
+    address, the média to know whose names to compare it against.
     """
     pairs, domain_media = [], {}
     for name, mail, media in db.execute(
@@ -471,6 +480,9 @@ def domain_conventions(db):
         # them point at is the one that owns it.
         best = max(medias.items(), key=lambda kv: kv[1])[0]
         out[domain] = {"media": best, "template": template}
+
+    # CiviCRM-wide learning wins where the two disagree: more examples.
+    out.update(learn_conventions.load_conventions(db))
     return out
 
 

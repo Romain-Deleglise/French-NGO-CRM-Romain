@@ -195,6 +195,44 @@ homonymie, `zzzinconnu@lefigaro.fr` laissée en file.
 
 ```bash
 python3 utils/civicrm_lookup.py --patterns        # les conventions apprises
+python3 utils/learn_conventions.py --show         # celles apprises sur CiviCRM
+```
+
+### Apprendre sur les 12 900, pas sur nos 587
+
+Déduire la convention du Figaro de nos propres fiches suppose d'avoir des fiches
+du Figaro. Or l'amorçage n'en a créé que pour un groupe presse restreint : 587
+journalistes, 44 conventions. Pour les rédactions dont nous ne tenons **qu'une**
+fiche — `nouvelobs.com`, `francetv.fr` — il n'y avait rien à apprendre, et leurs
+adresses étaient donc écartées à chaque fois.
+
+`learn_conventions.py` (étape `1b/5`) apprend sur **tous** les journalistes de
+CiviCRM qui ont une adresse, indépendamment des groupes presse : des centaines de
+médias au lieu de quelques dizaines, et chaque convention adossée à des dizaines
+d'adresses au lieu de deux. Une convention est un fait sur une rédaction, pas sur
+nos fiches.
+
+**Et ça ne crée aucune fiche.** Le script lit des noms et des adresses, n'en
+retient que ce qu'il en déduit — un domaine, un média, un gabarit, un compteur —
+et jette le reste ; l'export est supprimé du conteneur à la fin de l'étape. Les
+12 900 journalistes restent dans CiviCRM, où ils ont leur place : ce qui arrive
+ici, c'est la forme de `<initiale><nom>@lefigaro.fr`, pas les personnes. La table
+`mail_conventions` ne contient ni nom ni adresse — un test le vérifie.
+
+Deux effets, les mêmes que ci-dessus mais bien plus loin :
+
+- `maildomains` compte désormais comme connu tout domaine attesté par CiviCRM,
+  sans attendre nos deux fiches — c'est ce qui a débloqué les adresses de
+  `francetv.fr` et `nouvelobs.com` qui partaient à la poubelle. Les messageries
+  grand public en restent exclues, la règle vaut plus que la table.
+- le rapprochement par convention (`4b/5`) dispose de centaines de médias.
+
+Là où les deux sources se contredisent, CiviCRM l'emporte : plus d'exemples.
+
+```bash
+# dans le conteneur, à partir de l'export produit par civicrm-sync.sh
+python3 utils/learn_conventions.py --file /tmp/civi-journalists.json          # dry-run
+python3 utils/learn_conventions.py --file /tmp/civi-journalists.json --commit
 ```
 
 ---
