@@ -815,19 +815,22 @@ a.cal-ev:hover {
   border-style: solid;
 }
 
-/* The five record types — Rencontres, Personnes, Organisations, Interventions,
-   Contenus — in the app's orange, the same fill as the « + Nouveau… » buttons
-   on their list pages. */
+/* The six record types — Rencontres, Personnes, Courriels, Organisations,
+   Interventions, Contenus — in the app's orange, as a soft chip.
+   They used to carry the full orange fill with white text, like the
+   « + Nouveau… » buttons. Two problems, visible as soon as you look at the bar
+   rather than at one tab: they were the ONLY filled chips among eight, so six
+   saturated blocks drowned out TODO and Répartition — the two tabs you are
+   meant to act on — and a navigation tab shouted exactly as loudly as the
+   page's primary button. The fill now belongs to buttons alone; the nav is one
+   family of pale chips whose ink carries the colour code. */
 .site-header nav a.nav-record {
-  background: var(--brand);
-  /* Filled, so the border is there only to match the others' box size. */
-  border-color: transparent;
-  color: #fff;
-  /* 500, matching .btn — the same #fff at 600 reads harsher against the
-     orange, because the heavier strokes carry more of it. */
+  background: var(--brand-soft);
+  border-color: #fcd9a8;
+  color: var(--brand-ink);
   font-weight: 500;
 }
-.site-header nav a.nav-record:hover { background: var(--brand-ink); color: #fff; }
+.site-header nav a.nav-record:hover { background: #ffe0b8; color: var(--brand-ink); }
 
 /* Calendrier: the press blue, on its own now that the record tabs are orange. */
 .site-header nav a.nav-calendar {
