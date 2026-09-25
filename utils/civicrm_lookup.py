@@ -590,13 +590,23 @@ def cmd_apply_names(db, args):
             candidates.append(entry)
         hits = mailpatterns.resolve_all(
             address, convention["template"], [(c[0], c[1]) for c in candidates])
-        if len(hits) > 1:
-            # A real collision — two journalists at the same média whose names
-            # build the same address. Worth a human eye, unlike a plain miss.
+        # Ambiguity is a matter of NAMES, not of CiviCRM ids. CiviCRM carries
+        # duplicate contacts for the same journalist — `pierre.debaudouin@
+        # francetv.fr` matched five records all reading "Pierre de Baudouin" —
+        # and refusing to choose between someone and themself would leave every
+        # duplicated journalist unresolvable forever. Collapse on the name; the
+        # first record wins, and create_or_attach dedups on the name again.
+        by_person = {}
+        for cid, display in hits:
+            by_person.setdefault(norm_name(display), (cid, display))
+        if len(by_person) > 1:
+            # A real collision — two different journalists whose names build the
+            # same address. Worth a human eye, unlike a plain miss.
             ambiguous += 1
-            names = ", ".join(n for _i, n in hits)
+            names = ", ".join(n for _i, n in by_person.values())
             log(f"  ! {address} : {names} — impossible de trancher, laissée en file")
             continue
+        hits = list(by_person.values())
         if not hits:
             unmatched += 1
             continue

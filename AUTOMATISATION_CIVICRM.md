@@ -188,7 +188,11 @@ réellement apparue dans la boîte d'audit.
   effectivement expliquée est enregistrée (colonne `share`) et affichée.
 - **L'ambiguïté est refusée, jamais tranchée.** `pdupont@lefigaro.fr` avec un
   Pierre Dupont *et* un Paul Dupont à la rédaction : l'adresse reste en file
-  avec les deux noms affichés, pour qu'un humain décide.
+  avec les deux noms affichés, pour qu'un humain décide. L'ambiguïté se juge sur
+  les **noms**, pas sur les identifiants CiviCRM : celui-ci porte des doublons
+  (`pierre.debaudouin@francetv.fr` correspondait à cinq fiches nommées « Pierre
+  de Baudouin »), et refuser de trancher entre quelqu'un et lui-même rendait tout
+  journaliste dupliqué définitivement irrattachable.
 - **Chaque fiche le dit.** Ses notes portent « Adresse reconnue par la
   convention de LE FIGARO (« pnom ») — à confirmer ». Une convention est une
   habitude, pas une règle.

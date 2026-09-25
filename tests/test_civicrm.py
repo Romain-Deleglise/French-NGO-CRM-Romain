@@ -612,15 +612,24 @@ class ApplyNamesTests(unittest.TestCase):
         self.assertEqual(status, "resolved")
 
     def test_two_journalists_building_the_same_address_are_left_in_the_queue(self):
-        cl.enqueue(self.db, "jean.martin@francetv.fr", "", NOW)
+        # Two *different* people, one address: Le Figaro's <initiale><nom> turns
+        # both Pierre and Paul Dupont into pdupont@. Nobody can tell them apart,
+        # so the address waits for a human. (Two people bearing the same name are
+        # a different matter: this CRM has always treated a name within a type as
+        # one person, and the queue follows that.)
+        import learn_conventions as lc
+        lc.store(self.db, [("lefigaro.fr", "LE FIGARO", "pnom", 77, 1.0)],
+                 "civicrm", NOW)
+        cl.enqueue(self.db, "pdupont@lefigaro.fr", "", NOW)
         self._run([
-            self._record(3, "Jean Martin", "j.martin@francetv.fr", "FRANCE 3"),
-            self._record(4, "Jean Martin", "jean.martin2@francetv.fr",
-                         "FRANCE 3 OCCITANIE"),
+            self._record(3, "Pierre Dupont", "pierre.dupont@lefigaro.fr",
+                         "LE FIGARO"),
+            self._record(4, "Paul Dupont", "paul.dupont@lefigaro.fr",
+                         "LE FIGARO - ONLINE"),
         ])
         status, = self.db.execute(
             "SELECT status FROM civicrm_pending WHERE email = ?",
-            ("jean.martin@francetv.fr",)).fetchone()
+            ("pdupont@lefigaro.fr",)).fetchone()
         self.assertEqual(status, "pending")
 
     def test_an_unknown_domain_is_left_alone(self):
@@ -682,3 +691,42 @@ class PatternsOutputTests(unittest.TestCase):
     def test_an_empty_queue_still_yields_valid_json(self):
         import json
         self.assertEqual(json.loads(self._stdout(all=False)), {})
+
+
+class DuplicateContactTests(ApplyNamesTests):
+    """CiviCRM holds duplicate contacts for the same journalist.
+
+    `pierre.debaudouin@francetv.fr` matched five records all reading "Pierre de
+    Baudouin". Judging ambiguity on CiviCRM ids made that look like a five-way
+    collision, so every duplicated journalist was unresolvable. Ambiguity is
+    about names.
+    """
+
+    def test_five_records_for_one_person_resolve(self):
+        cl.enqueue(self.db, "pierre.debaudouin@francetv.fr", "", NOW)
+        self._run([
+            self._record(10 + n, "Pierre de Baudouin",
+                         f"pierre.debaudouin{n}@francetv.fr", "FRANCE 3")
+            for n in range(5)
+        ])
+        status, person_id = self.db.execute(
+            "SELECT status, person_id FROM civicrm_pending WHERE email = ?",
+            ("pierre.debaudouin@francetv.fr",)).fetchone()
+        self.assertEqual(status, "resolved")
+        # And exactly one fiche, not five.
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM persons").fetchone()[0], 1)
+        self.assertIsNotNone(person_id)
+
+    def test_a_spelling_variant_of_the_same_name_is_still_one_person(self):
+        cl.enqueue(self.db, "pierre.debaudouin@francetv.fr", "", NOW)
+        self._run([
+            self._record(20, "Pierre de Baudouin", "p.debaudouin@francetv.fr",
+                         "FRANCE 3"),
+            self._record(21, "Pierre De Baudouin", "pdebaudouin@francetv.fr",
+                         "FRANCE 3 OCCITANIE"),
+        ])
+        status, = self.db.execute(
+            "SELECT status FROM civicrm_pending WHERE email = ?",
+            ("pierre.debaudouin@francetv.fr",)).fetchone()
+        self.assertEqual(status, "resolved")
