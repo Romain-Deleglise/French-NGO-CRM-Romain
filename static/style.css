@@ -83,6 +83,23 @@ a:hover { text-decoration: underline; }
 .site-header nav a { color: var(--muted); font-weight: 500; }
 .site-header nav a:hover { color: var(--ink); text-decoration: none; }
 
+/* Bouton du menu mobile : masqué par défaut, affiché par la requête média
+   ci-dessous (et seulement quand nav.js a pu s'exécuter). */
+.nav-toggle {
+  display: none;
+  align-items: center;
+  gap: .4rem;
+  padding: .4rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.nav-toggle:hover { border-color: var(--brand); }
+
 .site-footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -968,6 +985,21 @@ a.tag:hover { text-decoration: none; filter: brightness(.96); }
     position: static;            /* un bandeau collant de 4 lignes mange l'écran */
   }
   .site-header nav { justify-content: flex-start; gap: .35rem .6rem; }
+
+  /* Le menu ne se replie que si nav.js a posé `has-js` : sans JavaScript la
+     barre reste déroulée plutôt que de devenir un menu qui ne s'ouvre pas. */
+  .site-header.has-js .nav-toggle { display: inline-flex; }
+  .site-header.has-js nav { display: none; }
+  .site-header.has-js.nav-open nav {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .15rem;
+    width: 100%;
+    padding-top: .5rem;
+    border-top: 1px solid var(--line);
+  }
+  .site-header.has-js.nav-open nav a { padding: .5rem .2rem; width: 100%; }
   .brand { font-size: 1rem; }
   .container { padding: 1rem; }
 
