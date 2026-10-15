@@ -55,6 +55,42 @@ désynchronisées. Vérifiez après coup :
 Un `FETCH_HEAD` laisse le dépôt en HEAD détaché et ne dit pas d'où il vient :
 à faire suivre d'un retour sur `main` dès le merge.
 
+## La page de veille des élu·es
+
+Elle est produite hors du CRM (dépôt `Pause-IA/declarations-elus-ia`) et le CRM
+ne fait que la servir derrière l'authentification et accepter son dépôt. Il n'y
+a rien à déployer : la page et ses données arrivent par `POST`.
+
+Poser le jeton dans le fichier de secrets, une seule fois :
+
+    VEILLE_UPLOAD_TOKEN=$(openssl rand -hex 32)
+
+puis `sudo docker compose up -d` pour que le conteneur le lise. Sans lui, le
+dépôt répond 503 et la page reste vide : rien ne casse.
+
+Celui ou celle qui produit le fichier dépose ensuite sans compte sur le CRM et
+sans accès au serveur :
+
+    curl -F fichier=@synthese_elus.json \
+         -H "X-Veille-Token: $VEILLE_UPLOAD_TOKEN" \
+         https://meetings.pauseia.fr/veille/televerser
+
+    curl -F fichier=@page/index.html \
+         -H "X-Veille-Token: $VEILLE_UPLOAD_TOKEN" \
+         https://meetings.pauseia.fr/veille/televerser
+
+Seuls ces deux noms sont acceptés, un fichier illisible est refusé sans
+remplacer le précédent, et la version d'avant reste en `.bak` à côté. Les
+fichiers vivent dans `uploads/veille/`, donc dans le volume : ils survivent aux
+reconstructions.
+
+La page se lit sur `/veille/`, derrière le mot de passe du CRM. Le jeton, lui,
+ne donne accès à rien d'autre : il se révoque en changeant la variable.
+
+Pourquoi un jeton plutôt que le mot de passe du CRM : la personne qui produit
+le fichier n'a pas besoin d'accéder aux 1 836 fiches et aux corps de courriels
+pour le déposer.
+
 ## Ce qui n'est pas ici
 
 Le fichier de secrets, `/opt/volunteer-apps/secrets/website-meeting.env`, et

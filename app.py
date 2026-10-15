@@ -23,6 +23,8 @@ import calendar as pycalendar
 import contextlib
 import email
 import fcntl
+import hmac
+import json
 import math
 import os
 import random
@@ -6734,6 +6736,146 @@ def delete_moderator(mod_id):
 
 # Initialise the database as soon as the module is imported, so it works both
 # under `flask run` and `uv run python app.py`.
+# --------------------------------------------------------------------------- #
+# Veille des déclarations d'élu·es sur l'IA
+#
+# Une page autonome, construite hors du CRM (dépôt Pause-IA/declarations-elus-ia)
+# par un script qui lit les comptes rendus de l'Assemblée, du Sénat et du
+# Parlement européen. Le CRM ne fait que deux choses pour elle : la servir
+# derrière l'authentification, et accepter son dépôt.
+#
+# Pourquoi ici plutôt qu'ailleurs : la page affiche un classement nommatif
+# d'élu·es et porte la mention « à ne pas diffuser ». Le dossier `static/` est
+# servi SANS mot de passe, donc y déposer les fichiers reviendrait à les
+# publier. Il faut une route protégée, et plaidoyer a déjà ce mot de passe.
+#
+# Pourquoi un jeton plutôt que le mot de passe du CRM pour le dépôt : la
+# personne qui produit le fichier n'a pas besoin d'accéder aux 1 836 fiches et
+# aux corps de courriels pour le déposer. Un jeton dédié lui suffit, se révoque
+# en changeant une variable, et s'utilise depuis un script.
+VEILLE_DIR = UPLOAD_DIR / "veille"
+VEILLE_FICHIERS = ("index.html", "synthese_elus.json")
+VEILLE_TAILLE_MAX = 32 * 1024 * 1024
+VEILLE_TOKEN = os.environ.get("VEILLE_UPLOAD_TOKEN", "")
+
+# La page vient d'un dépôt tiers et peut être remplacée sans relecture. Elle est
+# servie sur l'origine du CRM, donc son JavaScript pourrait lire les pages du
+# CRM avec la session de la personne connectée. Cette politique lui laisse ce
+# qu'il lui faut — son propre JSON, ses styles en ligne — et lui retire tout
+# moyen d'envoyer quoi que ce soit ailleurs.
+VEILLE_CSP = (
+    "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; "
+    "form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
+)
+
+
+def veille_valide(nom, contenu):
+    """(ok, message) — refuser un fichier abîmé AVANT de remplacer le bon.
+
+    Un dépôt interrompu ou un JSON tronqué remplacerait une page qui marche par
+    une page vide, et personne ne saurait pourquoi.
+    """
+    if not contenu:
+        return False, "fichier vide"
+    if len(contenu) > VEILLE_TAILLE_MAX:
+        return False, f"fichier trop gros ({len(contenu)} octets)"
+    if nom == "synthese_elus.json":
+        try:
+            donnees = json.loads(contenu.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            return False, f"JSON illisible : {exc}"
+        if not isinstance(donnees, dict):
+            return False, "le JSON attendu est un objet"
+        manquantes = [c for c in ("personnes", "genere_le") if c not in donnees]
+        if manquantes:
+            return False, "clés manquantes : " + ", ".join(manquantes)
+        if not isinstance(donnees["personnes"], list) or not donnees["personnes"]:
+            return False, "aucune personne dans le fichier"
+    elif b"<" not in contenu[:4096]:
+        return False, "ne ressemble pas à une page HTML"
+    return True, ""
+
+
+def veille_ecrire(nom, contenu):
+    """Remplacer un fichier sans jamais en servir un à moitié écrit.
+
+    On écrit à côté puis on renomme — `os.replace` est atomique — et on garde
+    la version précédente en `.bak`, pour qu'un mauvais dépôt se défasse d'une
+    commande plutôt que d'un nouvel export.
+    """
+    VEILLE_DIR.mkdir(parents=True, exist_ok=True)
+    cible = VEILLE_DIR / nom
+    provisoire = VEILLE_DIR / (nom + ".tmp")
+    provisoire.write_bytes(contenu)
+    if cible.exists():
+        os.replace(cible, VEILLE_DIR / (nom + ".bak"))
+    os.replace(provisoire, cible)
+
+
+@app.route("/veille/televerser", methods=["POST"])
+def veille_televerser():
+    """Déposer la page ou ses données, avec le jeton, sans compte sur le CRM.
+
+        curl -F fichier=@synthese_elus.json \
+             -H "X-Veille-Token: …" https://…/veille/televerser
+    """
+    if not VEILLE_TOKEN:
+        return ("VEILLE_UPLOAD_TOKEN n'est pas configuré sur le serveur.\n", 503)
+    fourni = request.headers.get("X-Veille-Token") or request.form.get("token") or ""
+    if not hmac.compare_digest(fourni, VEILLE_TOKEN):
+        return ("Jeton invalide.\n", 403)
+
+    fichier = request.files.get("fichier")
+    if fichier is None or not fichier.filename:
+        return ("Aucun fichier reçu (champ attendu : « fichier »).\n", 400)
+    nom = Path(secure_filename(fichier.filename)).name
+    if nom not in VEILLE_FICHIERS:
+        return (f"Nom refusé. Attendu : {', '.join(VEILLE_FICHIERS)}.\n", 400)
+
+    contenu = fichier.read(VEILLE_TAILLE_MAX + 1)
+    ok, pourquoi = veille_valide(nom, contenu)
+    if not ok:
+        return (f"Refusé, rien n'a été remplacé : {pourquoi}.\n", 400)
+    veille_ecrire(nom, contenu)
+    return (f"{nom} déposé ({len(contenu)} octets).\n", 200)
+
+
+@app.route("/veille/")
+@app.route("/veille")
+@login_required
+def veille():
+    """La page elle-même. L'adresse se termine par une barre oblique, sinon son
+    `fetch("synthese_elus.json")` relatif chercherait à la racine du site."""
+    if not request.path.endswith("/"):
+        return redirect(url_for("veille") + "/")
+    page = VEILLE_DIR / "index.html"
+    if not page.exists():
+        return (
+            "<h1>Veille élu·es et IA</h1><p>Aucune page déposée pour l'instant. "
+            "Elle est produite hors du CRM et déposée sur "
+            "<code>/veille/televerser</code>.</p>",
+            404,
+        )
+    reponse = send_from_directory(VEILLE_DIR, "index.html")
+    reponse.headers["Content-Security-Policy"] = VEILLE_CSP
+    reponse.headers["X-Robots-Tag"] = "noindex, nofollow"
+    reponse.headers["Cache-Control"] = "no-store"
+    return reponse
+
+
+@app.route("/veille/<nom>")
+@login_required
+def veille_fichier(nom):
+    """Les données de la page. Liste blanche : rien d'autre n'est servi ici."""
+    if nom not in VEILLE_FICHIERS or not (VEILLE_DIR / nom).exists():
+        abort(404)
+    reponse = send_from_directory(VEILLE_DIR, nom)
+    reponse.headers["X-Robots-Tag"] = "noindex, nofollow"
+    reponse.headers["Cache-Control"] = "no-store"
+    return reponse
+
+
 init_db()
 
 
